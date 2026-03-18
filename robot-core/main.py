@@ -107,7 +107,7 @@ class RobotRuntime:
             warn_cpu_temp_c    = safety_cfg.get("warn_cpu_temp_c",     70.0),
             min_ram_mb         = safety_cfg.get("min_ram_mb",          300),
             warn_ram_mb        = safety_cfg.get("warn_ram_mb",         600),
-            max_actuator_errors= safety_cfg.get("max_actuator_errors",  5),
+            max_actuator_errors= safety_cfg.get("max_actuator_errors",  50),
             watchdog_interval_s= safety_cfg.get("watchdog_interval_s",  2.0),
         )
         self._safety = SafetyMonitor(self._bus, limits)

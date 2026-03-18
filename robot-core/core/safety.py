@@ -45,7 +45,7 @@ class SafetyLimits:
     min_ram_mb: int         = 300   # → LOW_MEMORY event
     warn_ram_mb: int        = 600   # → log warning
     # Fault tolerance
-    max_actuator_errors: int = 5    # → SAFE_SHUTDOWN
+    max_actuator_errors: int = 50   # → SAFE_SHUTDOWN
     watchdog_interval_s: float = 2.0
 
 

@@ -76,6 +76,9 @@ class EventType:
     ALERT_RAISED            = "alert_raised"
     ALERT_CLEARED           = "alert_cleared"
 
+    # Audio state
+    MIC_STATE_CHANGED       = "mic_state_changed"   # {"state": "idle"|"listening"|"thinking"}
+
     # System
     HEARTBEAT               = "heartbeat"
     SHUTDOWN_REQUEST        = "shutdown_request"

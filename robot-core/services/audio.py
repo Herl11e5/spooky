@@ -312,6 +312,11 @@ class AudioInput:
                     {"transcript": text},
                     source="AudioInput",
                 )
+                self._bus.publish(
+                    EventType.MIC_STATE_CHANGED,
+                    {"state": "listening"},
+                    source="AudioInput",
+                )
                 # Strip wake word and keep remainder as start of command
                 remainder = re.sub(
                     re.escape(self._wake_word), "", text, flags=re.IGNORECASE
