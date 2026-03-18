@@ -106,15 +106,17 @@ class MemoryService:
         self._write_q: "queue.Queue" = __import__("queue").Queue()
         self._writer_thread: Optional[threading.Thread] = None
         self._active  = False
-
-    # ── lifecycle ─────────────────────────────────────────────────────────────
-
-    def start(self) -> None:
-        # Initialise schema on a dedicated connection
+        # Initialise schema immediately so reads are safe before start() is called
         conn = sqlite3.connect(str(self._db_path))
         conn.executescript(_SCHEMA)
         conn.commit()
         conn.close()
+
+    # ── lifecycle ─────────────────────────────────────────────────────────────
+
+    def start(self) -> None:
+        if self._active:
+            return
         self._active = True
         self._writer_thread = threading.Thread(
             target=self._write_loop, daemon=True, name="MemoryWriter"
