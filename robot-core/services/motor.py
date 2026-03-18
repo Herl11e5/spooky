@@ -201,9 +201,9 @@ class MotorService:
         self._pan_deg  = pan
         self._tilt_deg = tilt
         if self._pan_fn:
-            self._cmd(lambda: self._pan_fn(pan))
+            self._soft_cmd(lambda: self._pan_fn(pan))
         if self._tilt_fn:
-            self._cmd(lambda: self._tilt_fn(tilt))
+            self._soft_cmd(lambda: self._tilt_fn(tilt))
 
     def look_center(self) -> None:
         self.look_at(0, 0)
@@ -249,6 +249,16 @@ class MotorService:
             except Exception as e:
                 log.error(f"MotorService actuator error: {e}")
                 self._safety.record_actuator_error(str(e))
+
+    def _soft_cmd(self, fn) -> None:
+        """Execute a command that should NOT trigger the safety error counter (e.g. pan/tilt)."""
+        if self._crawler is None:
+            return
+        with self._lock:
+            try:
+                fn()
+            except Exception as e:
+                log.debug(f"MotorService pan/tilt soft error (ignored): {e}")
 
     def _on_obstacle(self, ev) -> None:
         dist = ev.get("distance_cm", 0)
