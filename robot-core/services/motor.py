@@ -75,6 +75,8 @@ class MotorService:
 
         # Hardware handles
         self._crawler: Optional[object] = None
+        self._pan_fn  = None   # resolved at init
+        self._tilt_fn = None
 
         if _HW_AVAILABLE:
             self._init_hardware()
@@ -95,6 +97,30 @@ class MotorService:
             log.error(f"MotorService: hardware init failed — {e}")
             self._safety.record_actuator_error(str(e))
             self._crawler = None
+            return
+
+        # Detect pan/tilt method names (API differs across picrawler versions)
+        self._pan_fn  = self._resolve_method(
+            "set_cam_pan_angle", "cam_pan_angle", "set_pan_angle",
+            "set_cam_pan", "cam_pan",
+        )
+        self._tilt_fn = self._resolve_method(
+            "set_cam_tilt_angle", "cam_tilt_angle", "set_tilt_angle",
+            "set_cam_tilt", "cam_tilt",
+        )
+        log.info(
+            f"MotorService: pan_fn={self._pan_fn.__name__ if self._pan_fn else 'None'}"
+            f"  tilt_fn={self._tilt_fn.__name__ if self._tilt_fn else 'None'}"
+        )
+
+    def _resolve_method(self, *names):
+        """Return the first matching bound method from self._crawler, or None."""
+        for name in names:
+            m = getattr(self._crawler, name, None)
+            if callable(m):
+                return m
+        log.warning(f"MotorService: no pan/tilt method found among {names} — head will not move")
+        return None
 
     def shutdown(self) -> None:
         """Safe-stop: stop motion, sit down, release servos."""
@@ -161,8 +187,10 @@ class MotorService:
         tilt = self._safety.clamp_tilt(tilt)
         self._pan_deg  = pan
         self._tilt_deg = tilt
-        self._cmd(lambda: self._crawler.set_cam_pan_angle(pan))
-        self._cmd(lambda: self._crawler.set_cam_tilt_angle(tilt))
+        if self._pan_fn:
+            self._cmd(lambda: self._pan_fn(pan))
+        if self._tilt_fn:
+            self._cmd(lambda: self._tilt_fn(tilt))
 
     def look_center(self) -> None:
         self.look_at(0, 0)
