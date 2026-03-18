@@ -133,17 +133,17 @@ class RobotRuntime:
         self._memory = MemoryService(self._bus, db_path=db_path)
 
         # ── Audio ─────────────────────────────────────────────────────────────────
-        self._audio = AudioService(bus, cfg)
+        self._audio = AudioService(self._bus, cfg)
 
         # ── Face database + Vision ────────────────────────────────────────────────
         face_db_path = ROOT / cfg.get("face.db_path", "data/faces/")
         self._face_db = FaceDatabase(face_db_path)
-        self._vision  = VisionService(bus, self._safety, self._face_db, cfg)
+        self._vision  = VisionService(self._bus, self._safety, self._face_db, cfg)
 
         # ── Mind / LLM ────────────────────────────────────────────────────────────
         brain = OllamaBrain(cfg)
         self._mind = MindService(
-            bus, self._modes, brain, self._audio, self._memory, cfg
+            self._bus, self._modes, brain, self._audio, self._memory, cfg
         )
         # Share the global ollama lock so vision + mind + summarizer never load two models at once
         _lock = get_ollama_lock()
@@ -151,31 +151,31 @@ class RobotRuntime:
         set_summarizer_lock(_lock)
 
         # ── Learning service ──────────────────────────────────────────────────────
-        self._learning = LearningService(bus, self._memory, cfg)
+        self._learning = LearningService(self._bus, self._memory, cfg)
 
         # ── Summarizer ────────────────────────────────────────────────────────────
-        self._summarizer = Summarizer(bus, self._memory, cfg, llm_model=brain._model)
+        self._summarizer = Summarizer(self._bus, self._memory, cfg, llm_model=brain._model)
 
         # ── Experiment engine ─────────────────────────────────────────────────────
         self._experiments = ExperimentEngine(
-            bus, self._modes, self._memory, self._learning, cfg
+            self._bus, self._modes, self._memory, self._learning, cfg
         )
 
         # ── Choreography ──────────────────────────────────────────────────────────
         self._choreo = Choreography(self._motor)
 
         # ── Conscience (internal drives) ──────────────────────────────────────────
-        self._conscience = Conscience(bus, self._modes)
+        self._conscience = Conscience(self._bus, self._modes)
 
         # ── Skills ────────────────────────────────────────────────────────────────
         self._skill_track = TrackFaceSkill(
-            bus, self._modes, self._safety, self._motor, self._memory
+            self._bus, self._modes, self._safety, self._motor, self._memory
         )
         self._skill_idle = IdleBehaviorSkill(
-            bus, self._modes, self._safety, self._motor, self._choreo, self._conscience
+            self._bus, self._modes, self._safety, self._motor, self._choreo, self._conscience
         )
         self._skill_patrol = PatrolSkill(
-            bus, self._modes, self._safety, self._motor, self._choreo, self._conscience
+            self._bus, self._modes, self._safety, self._motor, self._choreo, self._conscience
         )
 
         # ── Dashboard command queue ───────────────────────────────────────────────
@@ -200,13 +200,13 @@ class RobotRuntime:
 
         # ── Night Watch service ───────────────────────────────────────────────────
         self._night_watch = NightWatchService(
-            bus, self._modes, self._motor, self._choreo,
+            self._bus, self._modes, self._motor, self._choreo,
             self._audio, self._memory, self._vision, self._safety, cfg,
         )
 
         # ── Dashboard ─────────────────────────────────────────────────────────────
         self._dashboard = DashboardService(
-            bus, self._modes, self._memory, self._alerts,
+            self._bus, self._modes, self._memory, self._alerts,
             self._conscience, self._dash_cmd_q, cfg,
             night_watch  = self._night_watch,
             experiments  = self._experiments,
