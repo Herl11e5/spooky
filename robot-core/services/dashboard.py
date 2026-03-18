@@ -233,10 +233,10 @@ class DashboardService:
         except ImportError:
             return
         while True:
-            frame = self._vision.get_frame()
+            frame = self._vision.get_annotated_frame()
             if frame is None:
                 time.sleep(0.1); continue
-            ok, buf = cv2.imencode(".jpg", frame[:, :, ::-1], [cv2.IMWRITE_JPEG_QUALITY, 72])
+            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 72])
             if ok:
                 yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
             time.sleep(0.05)

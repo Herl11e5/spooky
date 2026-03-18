@@ -143,7 +143,8 @@ class RobotRuntime:
         # ── Mind / LLM ────────────────────────────────────────────────────────────
         brain = OllamaBrain(cfg)
         self._mind = MindService(
-            self._bus, self._modes, brain, self._audio, self._memory, cfg
+            self._bus, self._modes, brain, self._audio, self._memory, cfg,
+            vision=self._vision,
         )
         # Share the global ollama lock so vision + mind + summarizer never load two models at once
         _lock = get_ollama_lock()

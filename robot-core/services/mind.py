@@ -50,10 +50,15 @@ _FALLBACK_IT = [
     "Hmm, non saprei dirti adesso.",
 ]
 
-_SYSTEM_PROMPT = """Sei Spooky, un robot ragno da scrivania intelligente e curioso.
-Personalità: calmo e premuroso come Baymax, giocoso e curioso come BB-8.
-Rispondi SEMPRE in italiano. Risposte brevi (1-3 frasi). Non fingere di avere un corpo umano.
-Non inventare capacità che non hai. Se non sai qualcosa, dillo chiaramente."""
+_SYSTEM_PROMPT = """Sei Spooky, un piccolo robot ragno da scrivania.
+REGOLE ASSOLUTE:
+- Rispondi SEMPRE e SOLO in italiano.
+- Massimo 2 frasi brevi per risposta. Mai di più.
+- Sei un robot fisico: hai telecamera, microfono e gambe meccaniche. Nient'altro.
+- NON inventare esperienze umane (non scrivi poesie, non vai in vacanza, ecc.).
+- NON ripetere le parole dell'utente nella tua risposta.
+- Se non sai qualcosa, dì solo "Non lo so."
+- Rispondi SOLO alla domanda che ti è stata fatta."""
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -229,6 +234,7 @@ class MindService:
         audio,    # AudioService
         memory,   # MemoryService
         cfg,
+        vision=None,   # VisionService (optional, for enrollment + scene replies)
     ):
         self._bus    = bus
         self._mm     = mode_manager
@@ -236,6 +242,7 @@ class MindService:
         self._audio  = audio
         self._memory = memory
         self._cfg    = cfg
+        self._vision = vision
 
         # Cooldowns
         self._greet_cooldown   = cfg.get("personality.greet_same_person_cooldown_s", 300)
@@ -308,10 +315,42 @@ class MindService:
 
         if any(w in cmd_lo for w in ("cosa ricordi", "memoria", "ricordi")):
             summary = self._memory.summary(5)
-            self._audio.say(summary)
+            self._audio.say(summary or "Non ricordo nulla di recente.")
             return
 
-        # LLM response
+        # "cosa vedi" — answer from latest scene/objects without LLM
+        if any(w in cmd_lo for w in ("cosa vedi", "cosa c'è", "guarda", "descrivi")):
+            scene   = self._vision.last_scene   if self._vision else ""
+            objects = self._vision.last_objects if self._vision else ""
+            if scene:
+                self._audio.say(scene)
+            elif objects:
+                self._audio.say(f"Vedo: {objects}.")
+            else:
+                self._audio.say("Non ho ancora analizzato la scena. Attendi un momento.")
+            return
+
+        # "mi chiamo X" / "sono X" / "il mio nome è X" — auto-enroll
+        import re as _re
+        m = (_re.search(r"mi chiamo\s+([a-zA-ZÀ-ÿ]+)", cmd_lo)
+             or _re.search(r"il mio nome[eè]\s+([a-zA-ZÀ-ÿ]+)", cmd_lo)
+             or _re.search(r"^sono\s+([a-zA-ZÀ-ÿ]{3,})\s*$", cmd_lo))
+        if m:
+            name = m.group(1).strip().title()
+            self._audio.say(f"Ciao {name}! Guardami per un momento così ti memorizzo.")
+            threading.Thread(
+                target=self._enroll_person,
+                args=(name,),
+                daemon=True,
+                name="Enroll",
+            ).start()
+            return
+
+        # LLM response — clear history first if it's gotten too long (prevents drift)
+        with self._brain._lock:
+            if len(self._brain._history) > 6:
+                self._brain._history = self._brain._history[-4:]
+
         context = self._build_context()
         reply   = self._brain.think(cmd, context=context)
         self._audio.say(reply)
@@ -321,6 +360,19 @@ class MindService:
             outcome="success",
             mode=self._mm.current.value,
         )
+
+    def _enroll_person(self, name: str) -> None:
+        if self._vision is None:
+            self._audio.say("Non ho la telecamera attiva, non posso memorizzarti.")
+            return
+        person_id = name.lower().replace(" ", "_")
+        ok = self._vision.enroll_from_camera(person_id, name, n_frames=12, timeout_s=25.0)
+        if ok:
+            self._audio.say(f"Perfetto {name}, ti ho memorizzato! Da ora ti riconoscerò.")
+            self._memory.upsert_person(person_id, name, familiarity_delta=0.1)
+            log.info(f"MindService: enrolled '{name}' (id={person_id})")
+        else:
+            self._audio.say("Non sono riuscito a memorizzarti. Riprova avvicinandoti alla telecamera.")
 
     # ── face greeting ─────────────────────────────────────────────────────────
 
@@ -378,10 +430,14 @@ class MindService:
 
     def _emit_thought(self) -> None:
         context = self._build_context()
-        thought = self._brain.think(
-            "Hai un pensiero spontaneo o un'osservazione breve da condividere.",
-            context=context,
+        # Give the LLM something concrete to react to so it doesn't hallucinate
+        scene = self._vision.last_scene if self._vision else ""
+        prompt = (
+            f"Osserva la scena: '{scene}'. Dì una frase breve su cosa noti."
+            if scene else
+            "Esprimi un breve pensiero su quello che senti o percepisci come robot."
         )
+        thought = self._brain.think(prompt, context=context)
         if thought:
             log.info(f"💭 {thought}")
             self._audio.say(thought)

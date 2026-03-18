@@ -429,6 +429,12 @@ class VisionService:
         self._consecutive_no_face = 0
         self._face_loss_threshold = 8   # frames before PERSON_LOST
 
+        # Latest detection results (for annotation overlay)
+        self._det_lock           = threading.Lock()
+        self._last_faces:  List[Tuple] = []   # [(x,y,w,h, label, conf)]
+        self._last_scene:  str = ""           # last scene description
+        self._last_objects: str = ""          # last object list
+
         # Ollama vision model
         self._vision_model: Optional[str] = None
 
@@ -523,6 +529,39 @@ class VisionService:
             f = self._last_frame_rgb
             return f.copy() if f is not None else None
 
+    def get_annotated_frame(self) -> Optional[np.ndarray]:
+        """Return latest frame with face bboxes + labels drawn (BGR for MJPEG)."""
+        frame = self.get_frame()
+        if frame is None:
+            return None
+        # Convert RGB → BGR for cv2 drawing/encoding
+        bgr = frame[:, :, ::-1].copy()
+        with self._det_lock:
+            faces = list(self._last_faces)
+            objects = self._last_objects
+        for (x, y, w, h, label, conf) in faces:
+            color = (0, 220, 80) if label else (0, 180, 255)
+            cv2.rectangle(bgr, (x, y), (x+w, y+h), color, 2)
+            tag = f"{label} {conf:.0%}" if label else f"? {conf:.0%}" if conf > 0 else "persona"
+            cv2.rectangle(bgr, (x, y-22), (x+w, y), color, -1)
+            cv2.putText(bgr, tag, (x+4, y-5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0,0,0), 1, cv2.LINE_AA)
+        # Object overlay bottom strip
+        if objects:
+            h_f = bgr.shape[0]
+            cv2.rectangle(bgr, (0, h_f-26), (bgr.shape[1], h_f), (20,20,20), -1)
+            cv2.putText(bgr, objects[:90], (6, h_f-8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200,255,200), 1, cv2.LINE_AA)
+        return bgr
+
+    @property
+    def last_scene(self) -> str:
+        return self._last_scene
+
+    @property
+    def last_objects(self) -> str:
+        return self._last_objects
+
     def _get_frame(self) -> Optional[np.ndarray]:
         return self.get_frame()
 
@@ -541,6 +580,8 @@ class VisionService:
         if not faces:
             self._consecutive_no_face += 1
             if self._consecutive_no_face == self._face_loss_threshold:
+                with self._det_lock:
+                    self._last_faces = []
                 self._bus.publish(EventType.PERSON_LOST, {}, source="VisionService")
             return
 
@@ -550,6 +591,11 @@ class VisionService:
         gray  = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
 
         person_id, conf = self._recognizer.predict(gray)
+
+        # Store for overlay
+        display_label = (self._db.display_name(person_id) or person_id) if person_id else None
+        with self._det_lock:
+            self._last_faces = [(x, y, w, h, display_label, conf)]
 
         # Normalised face centre offset (-1..1) for head tracking
         frame_h, frame_w = frame.shape[:2]
@@ -633,6 +679,8 @@ class VisionService:
             )
             desc = self._extract_text(resp)
             log.info(f"👁️  {desc}")
+            with self._det_lock:
+                self._last_scene = desc
             self._bus.publish(EventType.SCENE_ANALYZED, {"description": desc}, source="VisionService")
         except Exception as e:
             log.warning(f"VisionService scene analysis: {e}")
@@ -666,6 +714,8 @@ class VisionService:
             )
             objects = self._extract_text(resp)
             log.info(f"🔍 Oggetti: {objects}")
+            with self._det_lock:
+                self._last_objects = objects
             self._bus.publish(EventType.OBJECTS_DETECTED, {"objects": objects}, source="VisionService")
         except Exception as e:
             log.warning(f"VisionService object analysis: {e}")
