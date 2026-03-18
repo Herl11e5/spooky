@@ -262,16 +262,20 @@ class DashboardService:
             return Response(generate(), mimetype="text/event-stream",
                             headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"})
 
-        # Auto-retry port if occupied
+        # Find a free port via socket test (werkzeug calls sys.exit on bind failure)
+        import socket as _socket
         port = self._port
         for attempt in range(5):
-            try:
-                log.info(f"Dashboard: http://{self._host}:{port}")
-                app.run(host=self._host, port=port, threaded=True, use_reloader=False)
-                break
-            except OSError:
-                log.warning(f"Dashboard: port {port} busy, trying {port+1}")
-                port += 1
+            with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+                s.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+                try:
+                    s.bind(("0.0.0.0", port))
+                    break   # port is free
+                except OSError:
+                    log.warning(f"Dashboard: port {port} busy, trying {port+1}")
+                    port += 1
+        log.info(f"Dashboard: http://{self._host}:{port}")
+        app.run(host=self._host, port=port, threaded=True, use_reloader=False)
 
     # ── MJPEG stream ──────────────────────────────────────────────────────────
 

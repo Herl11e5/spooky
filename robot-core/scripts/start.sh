@@ -23,6 +23,23 @@ fi
 
 mkdir -p "$CORE_DIR/logs" "$CORE_DIR/data"
 
+# Killa eventuale istanza precedente (tiene GPIO e porta)
+PIDFILE="$CORE_DIR/spooky.pid"
+if [ -f "$PIDFILE" ]; then
+    OLD_PID=$(cat "$PIDFILE")
+    if kill -0 "$OLD_PID" 2>/dev/null; then
+        echo "⏹  Fermo istanza precedente (PID $OLD_PID)..."
+        kill "$OLD_PID" 2>/dev/null || true
+        sleep 2
+    fi
+    rm -f "$PIDFILE"
+fi
+# Fallback: killa per nome nel caso il pid file sia perso
+pkill -f "python.*main\.py" 2>/dev/null || true
+sleep 1
+
 echo "🕷️  Avvio Spooky..."
 cd "$CORE_DIR"
-exec python main.py "$@"
+python main.py "$@" &
+echo $! > "$PIDFILE"
+wait $!
