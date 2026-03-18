@@ -212,6 +212,7 @@ class RobotRuntime:
             experiments  = self._experiments,
             summarizer   = self._summarizer,
             learning     = self._learning,
+            vision       = self._vision,
         )
 
         # ── Subscribe to lifecycle events ─────────────────────────────────────
