@@ -31,19 +31,35 @@ if ! grep -q "Bookworm\|bookworm" /etc/os-release 2>/dev/null; then
 fi
 ok "OS: $(. /etc/os-release && echo "$PRETTY_NAME")"
 
-# ── 2. Python 3.11 ───────────────────────────────────────────────────────────
-step "Python 3.11"
-if command -v python3.11 &>/dev/null; then
-    PYTHON="python3.11"
-elif python3 --version 2>&1 | grep -q "3\.11"; then
-    PYTHON="python3"
-else
-    warn "Python 3.11 non trovato — installo..."
-    sudo apt-get install -y python3.11 python3.11-venv 2>&1 | tee -a "$LOG" || \
-        fail "Impossibile installare python3.11"
-    PYTHON=$(command -v python3.11 || echo python3)
+# ── 2. Python 3.11+ ──────────────────────────────────────────────────────────
+step "Python 3.11+"
+# Accetta 3.11, 3.12 o 3.13 — qualsiasi versione >= 3.11
+_pick_python() {
+    for v in python3.13 python3.12 python3.11; do
+        command -v "$v" &>/dev/null && { echo "$v"; return; }
+    done
+    # Fallback: controlla se python3 di sistema è >= 3.11
+    local ver
+    ver=$(python3 -c "import sys; print(sys.version_info >= (3,11))" 2>/dev/null)
+    [ "$ver" = "True" ] && { echo "python3"; return; }
+    echo ""
+}
+PYTHON=$(_pick_python)
+if [ -z "$PYTHON" ]; then
+    warn "Python >= 3.11 non trovato — provo a installare python3.12..."
+    sudo apt-get install -y python3.12 python3.12-venv 2>&1 | tee -a "$LOG" \
+        || sudo apt-get install -y python3 python3-venv 2>&1 | tee -a "$LOG" \
+        || fail "Impossibile installare Python"
+    PYTHON=$(_pick_python)
+    [ -z "$PYTHON" ] && fail "Python >= 3.11 non disponibile"
 fi
 ok "Python: $($PYTHON --version)"
+
+# Assicura che python3-venv sia installato per la versione scelta
+PYVER=$($PYTHON -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+sudo apt-get install -y "python${PYVER}-venv" 2>&1 | tee -a "$LOG" || \
+    sudo apt-get install -y python3-venv 2>&1 | tee -a "$LOG" || \
+    warn "python${PYVER}-venv non disponibile — uso python3-venv"
 
 # ── 3. Dipendenze di sistema ──────────────────────────────────────────────────
 step "Pacchetti apt"
@@ -75,9 +91,9 @@ done
 # ── 4. Virtual environment ────────────────────────────────────────────────────
 step "Virtual environment"
 if [ -f "$VENV_DIR/bin/python" ]; then
-    VENV_VER=$("$VENV_DIR/bin/python" --version 2>&1)
-    if ! echo "$VENV_VER" | grep -q "3\.11"; then
-        warn "venv ha $VENV_VER — ricreo"
+    VENV_OK=$("$VENV_DIR/bin/python" -c "import sys; print(sys.version_info >= (3,11))" 2>/dev/null)
+    if [ "$VENV_OK" != "True" ]; then
+        warn "venv troppo vecchio ($("$VENV_DIR/bin/python" --version 2>&1)) — ricreo"
         rm -rf "$VENV_DIR"
     fi
 fi
