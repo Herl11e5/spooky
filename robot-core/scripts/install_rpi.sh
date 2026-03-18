@@ -64,18 +64,23 @@ sudo apt-get install -y "python${PYVER}-venv" 2>&1 | tee -a "$LOG" || \
 # ── 3. Dipendenze di sistema ──────────────────────────────────────────────────
 step "Pacchetti apt"
 APT_PKGS=(
+    git
+    curl
+    unzip
+    python3-pip
+    python3-setuptools
+    python3-smbus           # I2C — richiesto da robot-hat
     espeak-ng
     alsa-utils
     pulseaudio-utils
-    curl
-    unzip
-    git
     libatlas-base-dev       # numpy su ARM
     libopenblas-dev
     python3-picamera2       # picamera2 (solo da apt, non pip)
     python3-libcamera
     portaudio19-dev         # sounddevice
     libsndfile1
+    libgpiod2               # GPIO su RPi 5
+    python3-gpiod
 )
 sudo apt-get update -qq 2>&1 | tail -3 | tee -a "$LOG"
 for pkg in "${APT_PKGS[@]}"; do
@@ -110,7 +115,75 @@ step "pip"
 pip install --upgrade pip --quiet 2>&1 | tee -a "$LOG"
 ok "pip $(pip --version | cut -d' ' -f2)"
 
-# ── 6. Requirements Python ───────────────────────────────────────────────────
+# ── 6a. SunFounder robot-hat (metodo ufficiale) ───────────────────────────────
+step "SunFounder robot-hat v2.0"
+ROBOTHAT_DIR="$HOME/robot-hat"
+if python3 -c "import robot_hat" &>/dev/null; then
+    ok "robot-hat già installato"
+else
+    log "  ⏳ Clone robot-hat v2.0..."
+    rm -rf "$ROBOTHAT_DIR"
+    git clone -b v2.0 https://github.com/sunfounder/robot-hat.git --depth 1 "$ROBOTHAT_DIR" \
+        2>&1 | tee -a "$LOG"
+    log "  ⏳ Installazione robot-hat..."
+    cd "$ROBOTHAT_DIR"
+    sudo python3 install.py 2>&1 | tee -a "$LOG" \
+        && ok "robot-hat installato" \
+        || warn "robot-hat install.py fallito"
+    cd -
+fi
+
+# ── 6b. SunFounder vilib (metodo ufficiale) ───────────────────────────────────
+step "SunFounder vilib"
+VILIB_DIR="$HOME/vilib"
+if python3 -c "import vilib" &>/dev/null; then
+    ok "vilib già installato"
+else
+    log "  ⏳ Clone vilib..."
+    rm -rf "$VILIB_DIR"
+    git clone https://github.com/sunfounder/vilib.git --depth 1 "$VILIB_DIR" \
+        2>&1 | tee -a "$LOG"
+    log "  ⏳ Installazione vilib..."
+    cd "$VILIB_DIR"
+    sudo python3 install.py 2>&1 | tee -a "$LOG" \
+        && ok "vilib installato" \
+        || warn "vilib install.py fallito (non bloccante)"
+    cd -
+fi
+
+# ── 6c. SunFounder picrawler (metodo ufficiale) ───────────────────────────────
+step "SunFounder picrawler"
+PICRAWLER_DIR="$HOME/picrawler"
+if python3 -c "from picrawler import Picrawler" &>/dev/null; then
+    ok "picrawler già installato"
+else
+    log "  ⏳ Clone picrawler..."
+    rm -rf "$PICRAWLER_DIR"
+    git clone https://github.com/sunfounder/picrawler.git --depth 1 "$PICRAWLER_DIR" \
+        2>&1 | tee -a "$LOG"
+    log "  ⏳ Installazione picrawler (può richiedere qualche minuto)..."
+    cd "$PICRAWLER_DIR"
+    sudo python3 setup.py install 2>&1 | tee -a "$LOG" \
+        && ok "picrawler installato" \
+        || warn "picrawler setup.py fallito"
+    cd -
+fi
+
+# ── 6d. I2S amplifier audio setup ─────────────────────────────────────────────
+step "I2S amplifier (audio output)"
+if [ -f "$ROBOTHAT_DIR/i2samp.sh" ]; then
+    log "  ⏳ Configurazione I2S amplifier..."
+    cd "$ROBOTHAT_DIR"
+    # i2samp.sh chiede input interattivo — rispondo automaticamente con yes
+    echo "y" | sudo bash i2samp.sh 2>&1 | tee -a "$LOG" \
+        && ok "I2S amplifier configurato (richiede reboot per avere effetto)" \
+        || warn "i2samp.sh fallito — audio output potrebbe non funzionare"
+    cd -
+else
+    warn "i2samp.sh non trovato in $ROBOTHAT_DIR — esegui manualmente dopo"
+fi
+
+# ── 6e. Requirements Python (pacchetti Spooky) ───────────────────────────────
 step "Requisiti Python (robot-core)"
 pip install \
     pyyaml \
@@ -122,18 +195,6 @@ pip install \
     sounddevice \
     requests \
     2>&1 | tee -a "$LOG" || warn "Alcuni pacchetti pip hanno fallito"
-
-# picrawler + robot-hat: solo ruote ARM Python 3.11
-log "  ⏳ picrawler + robot-hat (SunFounder)..."
-if pip install --quiet picrawler robot-hat 2>&1 | tee -a "$LOG"; then
-    ok "picrawler + robot-hat"
-else
-    warn "PyPI fallito — provo da GitHub..."
-    pip install --quiet \
-        "git+https://github.com/sunfounder/picrawler.git" \
-        "git+https://github.com/sunfounder/robot-hat.git" \
-        2>&1 | tee -a "$LOG" || warn "picrawler/robot-hat non installati — modalità sim"
-fi
 
 # ── 7. Vosk model italiano ────────────────────────────────────────────────────
 step "Modello Vosk italiano"
@@ -270,11 +331,14 @@ echo
 echo "════════════════════════════════════════════════════════"
 echo " ✅  Installazione completata!"
 echo
-echo "   Avvio manuale:    bash $CORE_DIR/scripts/start.sh"
-echo "   Avvio systemd:    sudo systemctl start spooky"
-echo "   Log in tempo rl:  sudo journalctl -u spooky -f"
-echo "   Dashboard:        http://$(hostname -I | awk '{print $1}'):5000"
-echo "   Registra volto:   python $CORE_DIR/scripts/enroll_face.py --name \"Nome\" --id \"id\""
+echo "   ⚠️  REBOOT CONSIGLIATO per attivare I2S audio:"
+echo "       sudo reboot"
+echo
+echo "   Dopo il reboot:"
+echo "   Avvio manuale:  bash $CORE_DIR/scripts/start.sh"
+echo "   Dashboard:      http://$(hostname -I | awk '{print $1}' 2>/dev/null || echo '<ip>'):5000"
+echo "   Diagnosi hw:    python $CORE_DIR/scripts/diagnose.py all"
+echo "   Registra volto: python $CORE_DIR/scripts/enroll_face.py --name \"Nome\" --id \"id\""
 echo
 echo "   Log installazione: $LOG"
 echo "════════════════════════════════════════════════════════"
