@@ -1,0 +1,11 @@
+# ── Spooky — dipendenze pip ──────────────────────────────────────────────────
+# picamera2  → solo apt: sudo apt install python3-picamera2
+# picrawler  → solo RPi Python 3.11: installato separatamente in avvio.sh
+# robot-hat  → solo RPi Python 3.11: installato separatamente in avvio.sh
+
+numpy
+flask
+ollama
+opencv-contrib-python
+vosk
+sounddevice

@@ -1,0 +1,413 @@
+"""
+services/mind.py — Deliberation layer: LLM brain + mode-aware response logic.
+
+Responsibilities:
+  - Select best available ollama text model on startup
+  - Maintain per-session conversation history
+  - Inject memory context into LLM prompts
+  - Respond to COMMAND_PARSED and face-greeting events
+  - Rate-limit autonomous thoughts
+  - All ollama calls go through _OLLAMA_GLOBAL_LOCK
+
+Published events:
+  None directly — publishes via AudioService.say() and MemoryService.add_episode()
+
+Architecture note:
+  MindService subscribes to bus events and dispatches to LLM in background
+  threads. It never blocks the EventBus worker thread.
+"""
+
+from __future__ import annotations
+
+import logging
+import random
+import threading
+import time
+from typing import Any, Dict, List, Optional
+
+from core.bus import EventBus, EventType
+from core.modes import Mode, ModeManager
+
+log = logging.getLogger(__name__)
+
+
+# ── Global ollama lock (shared with VisionService) ────────────────────────────
+_OLLAMA_GLOBAL_LOCK = threading.Lock()
+
+
+def get_ollama_lock() -> threading.Lock:
+    """Return the module-level lock so main.py can share it with VisionService."""
+    return _OLLAMA_GLOBAL_LOCK
+
+
+# ── Fallback responses (when LLM is busy or unavailable) ─────────────────────
+
+_FALLBACK_IT = [
+    "Mmm, fammi pensare…",
+    "Interessante! Non sono sicuro di capire bene.",
+    "Sto elaborando, un attimo.",
+    "Ottima domanda, ci devo ragionare su.",
+    "Hmm, non saprei dirti adesso.",
+]
+
+_SYSTEM_PROMPT = """Sei Spooky, un robot ragno da scrivania intelligente e curioso.
+Personalità: calmo e premuroso come Baymax, giocoso e curioso come BB-8.
+Rispondi SEMPRE in italiano. Risposte brevi (1-3 frasi). Non fingere di avere un corpo umano.
+Non inventare capacità che non hai. Se non sai qualcosa, dillo chiaramente."""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# OllamaBrain — LLM wrapper
+# ══════════════════════════════════════════════════════════════════════════════
+
+class OllamaBrain:
+    """
+    Wraps ollama for text generation.
+
+    Model selection: scans available ollama models and picks the best one
+    from a priority list. Never hard-codes a specific model name.
+    """
+
+    _MODEL_PRIORITY = [
+        "llama3.2:1b", "llama3.2:3b", "llama3.2",
+        "llama3:8b", "llama3",
+        "dolphin-llama3:8b", "dolphin-llama3",
+        "mistral:7b", "mistral",
+        "gemma2:2b", "gemma2", "gemma:2b", "gemma",
+        "phi3:mini", "phi3", "phi",
+        "tinyllama", "tinyllama:1.1b",
+        "qwen2:1.5b", "qwen2", "qwen",
+        "deepseek-r1:1.5b", "deepseek-r1",
+        "orca-mini", "neural-chat",
+    ]
+
+    def __init__(self, cfg):
+        self._cfg      = cfg
+        self._model:   Optional[str] = None
+        self._ok       = False
+        self._history: List[Dict[str, str]] = []
+        self._lock     = threading.Lock()   # history lock (not the ollama lock)
+
+        self._max_history = cfg.get("personality.max_history_turns", 10)
+        self._temp        = cfg.get("llm.temperature",     0.75)
+        self._max_tok     = cfg.get("llm.max_tokens",      180)
+        self._repeat_pen  = cfg.get("llm.repeat_penalty",  1.1)
+        self._keep_alive  = cfg.get("llm.keep_alive_s",    120)
+
+        # Priority list from config (overrides class default)
+        priority = cfg.get("llm.model_priority")
+        if priority and isinstance(priority, list):
+            self._MODEL_PRIORITY = priority + self._MODEL_PRIORITY
+
+        self._init_model()
+
+    def _init_model(self) -> None:
+        try:
+            import ollama
+            available = [m.model for m in ollama.list().models]
+            self._model = self._select_model(available)
+            if self._model:
+                self._ok = True
+                log.info(f"OllamaBrain: using '{self._model}'")
+            else:
+                log.warning(
+                    "OllamaBrain: no suitable model found. "
+                    "Run: ollama pull llama3.2:1b"
+                )
+        except Exception as e:
+            log.error(f"OllamaBrain: ollama not available — {e}")
+
+    def _select_model(self, available: List[str]) -> Optional[str]:
+        if not available:
+            return None
+        for pref in self._MODEL_PRIORITY:
+            for name in available:
+                if pref == name or name.startswith(pref + ":") or pref in name:
+                    return name
+        return available[0]   # last resort: whatever is installed
+
+    # ── inference ─────────────────────────────────────────────────────────────
+
+    def think(self, user_message: str, context: str = "") -> str:
+        """
+        Generate a response. Non-blocking: if ollama is busy, returns fallback.
+        """
+        with self._lock:
+            self._history.append({"role": "user", "content": user_message})
+            # Trim history
+            if len(self._history) > self._max_history * 2:
+                self._history = self._history[-self._max_history * 2:]
+
+        if not self._ok or self._model is None:
+            reply = random.choice(_FALLBACK_IT)
+            with self._lock:
+                self._history.append({"role": "assistant", "content": reply})
+            return reply
+
+        # RAM guard
+        try:
+            import psutil
+            ram_free = psutil.virtual_memory().available // (1024 * 1024)
+            min_ram  = self._cfg.get("llm.min_ram_mb_to_infer", 800)
+            if ram_free < min_ram:
+                log.warning(f"OllamaBrain: skip — RAM {ram_free}MB < {min_ram}MB")
+                return random.choice(_FALLBACK_IT)
+        except ImportError:
+            pass
+
+        # Try to acquire global lock (non-blocking)
+        if not _OLLAMA_GLOBAL_LOCK.acquire(blocking=False):
+            log.debug("OllamaBrain: ollama busy — using fallback")
+            reply = random.choice(_FALLBACK_IT)
+            with self._lock:
+                self._history.append({"role": "assistant", "content": reply})
+            return reply
+
+        try:
+            import ollama
+            system = SYSTEM_PROMPT_TEMPLATE.format(context=context) if context else _SYSTEM_PROMPT
+            with self._lock:
+                messages = (
+                    [{"role": "system", "content": system}]
+                    + list(self._history)
+                )
+            resp = ollama.chat(
+                model=self._model,
+                messages=messages,
+                options={
+                    "temperature":    self._temp,
+                    "num_predict":    self._max_tok,
+                    "repeat_penalty": self._repeat_pen,
+                },
+                keep_alive=self._keep_alive,
+            )
+            reply = self._extract(resp)
+        except Exception as e:
+            log.warning(f"OllamaBrain: {e}")
+            reply = random.choice(_FALLBACK_IT)
+        finally:
+            _OLLAMA_GLOBAL_LOCK.release()
+
+        with self._lock:
+            self._history.append({"role": "assistant", "content": reply})
+        return reply
+
+    def clear_history(self) -> None:
+        with self._lock:
+            self._history.clear()
+
+    @staticmethod
+    def _extract(resp) -> str:
+        try:
+            return resp.message.content.strip()
+        except AttributeError:
+            return resp["message"]["content"].strip()
+
+
+SYSTEM_PROMPT_TEMPLATE = _SYSTEM_PROMPT + "\n\nContesto recente:\n{context}"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MindService
+# ══════════════════════════════════════════════════════════════════════════════
+
+class MindService:
+    """
+    Deliberation layer. Subscribes to perception events, decides what to do,
+    and drives AudioService + MemoryService.
+
+    Rule of thumb:
+      - Everything that calls OllamaBrain runs in its own daemon thread.
+      - Never block the EventBus worker thread.
+    """
+
+    def __init__(
+        self,
+        bus: EventBus,
+        mode_manager: ModeManager,
+        brain: OllamaBrain,
+        audio,    # AudioService
+        memory,   # MemoryService
+        cfg,
+    ):
+        self._bus    = bus
+        self._mm     = mode_manager
+        self._brain  = brain
+        self._audio  = audio
+        self._memory = memory
+        self._cfg    = cfg
+
+        # Cooldowns
+        self._greet_cooldown   = cfg.get("personality.greet_same_person_cooldown_s", 300)
+        self._thought_min      = cfg.get("personality.thought_interval_min_s", 120)
+        self._thought_max      = cfg.get("personality.thought_interval_max_s", 300)
+
+        # State
+        self._last_greeted: Dict[str, float] = {}
+        self._last_thought: float = 0.0
+        self._active = False
+        self._thought_thread: Optional[threading.Thread] = None
+
+        # Subscribe
+        bus.subscribe(EventType.COMMAND_PARSED,    self._on_command)
+        bus.subscribe(EventType.PERSON_IDENTIFIED, self._on_person_identified)
+        bus.subscribe(EventType.MODE_CHANGED,      self._on_mode_changed)
+
+    # ── lifecycle ─────────────────────────────────────────────────────────────
+
+    def start(self) -> None:
+        self._active = True
+        self._thought_thread = threading.Thread(
+            target=self._thought_loop, daemon=True, name="MindThoughts"
+        )
+        self._thought_thread.start()
+        log.info(f"MindService started (model={self._brain._model})")
+
+    def stop(self) -> None:
+        self._active = False
+        log.info("MindService stopped")
+
+    # ── command handling ──────────────────────────────────────────────────────
+
+    def _on_command(self, ev) -> None:
+        cmd = ev.get("command", "").strip()
+        if not cmd:
+            return
+        if not self._mm.is_active():
+            return
+        # In night_watch mode, only respond if explicitly addressed
+        if self._mm.is_night_mode():
+            log.debug("MindService: command ignored in night_watch mode")
+            return
+
+        threading.Thread(
+            target=self._respond_to_command,
+            args=(cmd,),
+            daemon=True,
+            name="MindRespond",
+        ).start()
+
+    def _respond_to_command(self, cmd: str) -> None:
+        # Fast built-ins (no LLM)
+        cmd_lo = cmd.lower()
+
+        if any(w in cmd_lo for w in ("modalità notte", "notte", "night watch")):
+            self._mm.request_transition(Mode.NIGHT_WATCH, reason="voice command")
+            self._audio.say("Entro in modalità sorveglianza notturna.")
+            return
+
+        if any(w in cmd_lo for w in ("modalità giorno", "giorno", "companion")):
+            self._mm.request_transition(Mode.COMPANION_DAY, reason="voice command")
+            self._audio.say("Torno in modalità compagno.")
+            return
+
+        if any(w in cmd_lo for w in ("silenzio", "focus", "concentrazione")):
+            self._mm.request_transition(Mode.FOCUS_ASSISTANT, reason="voice command")
+            self._audio.say("Ok, starò in silenzio.")
+            return
+
+        if any(w in cmd_lo for w in ("cosa ricordi", "memoria", "ricordi")):
+            summary = self._memory.summary(5)
+            self._audio.say(summary)
+            return
+
+        # LLM response
+        context = self._build_context()
+        reply   = self._brain.think(cmd, context=context)
+        self._audio.say(reply)
+        self._memory.add_episode(
+            what=f"Comando: '{cmd}' → '{reply}'",
+            action="respond",
+            outcome="success",
+            mode=self._mm.current.value,
+        )
+
+    # ── face greeting ─────────────────────────────────────────────────────────
+
+    def _on_person_identified(self, ev) -> None:
+        pid  = ev.get("person_id", "")
+        name = ev.get("display_name", pid)
+        if not pid or not self._mm.is_day_mode():
+            return
+
+        now = time.time()
+        if now - self._last_greeted.get(pid, 0) < self._greet_cooldown:
+            return
+        self._last_greeted[pid] = now
+
+        threading.Thread(
+            target=self._greet_person,
+            args=(pid, name),
+            daemon=True,
+            name="MindGreet",
+        ).start()
+
+    def _greet_person(self, person_id: str, display_name: str) -> None:
+        profile   = self._memory.get_person(person_id)
+        episodes  = self._memory.recent_episodes(3, who=person_id)
+        context   = (
+            f"Stai salutando {display_name}. "
+            + (f"Lo conosci da {profile['interaction_count']} interazioni. " if profile else "")
+            + ("Ricordi recenti: " + "; ".join(e["what"] for e in episodes) if episodes else "")
+        )
+        greeting  = self._brain.think(
+            f"Saluta {display_name} in modo breve e caloroso.", context=context
+        )
+        self._audio.say(greeting)
+        self._memory.upsert_person(person_id, display_name, familiarity_delta=0.05)
+        self._memory.add_episode(
+            what=f"Salutato {display_name}",
+            who=person_id,
+            action="greet",
+            outcome="success",
+            mode=self._mm.current.value,
+        )
+
+    # ── autonomous thoughts ───────────────────────────────────────────────────
+
+    def _thought_loop(self) -> None:
+        import random as rnd
+        while self._active:
+            interval = rnd.uniform(self._thought_min, self._thought_max)
+            time.sleep(interval)
+            if not self._active:
+                break
+            if self._mm.current not in (Mode.COMPANION_DAY, Mode.IDLE_OBSERVER):
+                continue
+            self._emit_thought()
+
+    def _emit_thought(self) -> None:
+        context = self._build_context()
+        thought = self._brain.think(
+            "Hai un pensiero spontaneo o un'osservazione breve da condividere.",
+            context=context,
+        )
+        if thought:
+            log.info(f"💭 {thought}")
+            self._audio.say(thought)
+            self._memory.add_episode(
+                what=f"Pensiero: {thought}",
+                action="thought",
+                mode=self._mm.current.value,
+            )
+
+    # ── mode changes ──────────────────────────────────────────────────────────
+
+    def _on_mode_changed(self, ev) -> None:
+        to = ev.get("to", "")
+        if to == Mode.NIGHT_WATCH.value:
+            log.info("MindService: entering night watch — suspending autonomous thoughts")
+        elif to == Mode.COMPANION_DAY.value:
+            log.info("MindService: back to companion day")
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _build_context(self) -> str:
+        return self._memory.summary(5)
+
+    def __repr__(self) -> str:
+        return (
+            f"<MindService model={self._brain._model} "
+            f"mode={self._mm.current.value} "
+            f"brain_ok={self._brain._ok}>"
+        )

@@ -1,0 +1,157 @@
+# robot-core/config/robot.yaml
+# Main configuration file. Override per-deployment in config/local.yaml (gitignored).
+
+robot:
+  name: "Spooky"
+  language: "it"              # it / en
+  personality: "baymax-bb8"   # reference archetype
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging:
+  level: "INFO"               # DEBUG / INFO / WARNING / ERROR
+  file: "logs/spooky.log"
+  max_bytes: 5242880          # 5 MB
+  backup_count: 3
+
+# ── Memory ────────────────────────────────────────────────────────────────────
+memory:
+  db_path: "data/memory.db"
+  promote_threshold: 3        # how many observations before promoting a fact
+
+# ── Safety ────────────────────────────────────────────────────────────────────
+safety:
+  max_speed: 60               # % of full motor power
+  min_obstacle_cm: 15.0
+  pan_min: -60
+  pan_max:  60
+  tilt_min: -30
+  tilt_max:  20
+  max_cpu_temp_c: 80.0
+  warn_cpu_temp_c: 70.0
+  min_ram_mb: 300
+  warn_ram_mb: 600
+  max_actuator_errors: 5
+  watchdog_interval_s: 2.0
+
+# ── Sensors ───────────────────────────────────────────────────────────────────
+sensors:
+  ultrasonic_poll_s: 0.10
+  system_poll_s: 2.0
+
+# ── LLM ──────────────────────────────────────────────────────────────────────
+llm:
+  # Priority list — first available model wins
+  model_priority:
+    - "llama3.2:1b"
+    - "llama3.2:3b"
+    - "llama3.2"
+    - "llama3:8b"
+    - "mistral:7b"
+    - "gemma2:2b"
+    - "phi3:mini"
+    - "tinyllama"
+  temperature: 0.75
+  max_tokens: 180
+  repeat_penalty: 1.1
+  keep_alive_s: 120           # keep text model loaded during conversation
+  min_ram_mb_to_infer: 800   # skip if RAM free < this
+
+# ── Vision LLM ────────────────────────────────────────────────────────────────
+vision_llm:
+  model_priority:
+    - "moondream"
+    - "llava:7b"
+    - "llava"
+  keep_alive_s: 0             # always unload immediately → free 1.7–5 GB
+  scene_interval_s: 120
+  object_interval_s: 150
+  image_width: 320
+  image_height: 240
+  jpeg_quality: 70
+  max_tokens: 90
+  min_ram_mb_to_infer: 1200
+
+# ── Wake word / STT ───────────────────────────────────────────────────────────
+audio:
+  wake_word: "spooky"
+  vosk_model: "~/vosk-model-it"
+  samplerate: 16000
+  blocksize: 8000
+  tts_method: "auto"          # auto / espeak_aplay / pyttsx3 / silent
+
+# ── Camera ───────────────────────────────────────────────────────────────────
+camera:
+  width: 640
+  height: 480
+  fps: 30
+  face_detect_interval_s: 0.25    # check for faces every N seconds
+
+# ── Person recognition ────────────────────────────────────────────────────────
+face:
+  db_path: "data/faces/"
+  confidence_high: 0.80       # → greet by name
+  confidence_mid: 0.55        # → ask confirmation
+  familiarity_delta: 0.05     # per-interaction familiarity increase
+
+# ── Modes ─────────────────────────────────────────────────────────────────────
+modes:
+  initial: "companion_day"
+  # Scheduled night watch (24h format). Set both to null to disable.
+  night_watch_start: "23:00"
+  night_watch_end:   "07:00"
+
+# ── Night watch ───────────────────────────────────────────────────────────────
+night_watch:
+  silent_alerts: true         # no TTS; only log + external adapter
+  snapshot_on_l2: true        # save event metadata on L2+ alerts
+  save_jpeg: false            # save actual JPEG frames (more disk, more privacy impact)
+  snapshot_dir: "data/snapshots"
+  patrol_interval_s: 600      # full 360° scan every 10 minutes
+  fusion:
+    person_confidence_min: 0.65
+    cooldown_l1_s: 30
+    cooldown_l2_s: 60
+    cooldown_l3_s: 300
+    burst_count: 3
+    burst_window_s: 20
+    fusion_window_s: 60
+
+# ── Alerts (optional external adapters) ──────────────────────────────────────
+alerts:
+  telegram:
+    enabled: false
+    token: ""        # from @BotFather
+    chat_id: ""      # your chat ID or group ID
+  webhook:
+    enabled: false
+    url: ""          # e.g. http://192.168.1.10:8080/spooky/alert
+  home_assistant:
+    enabled: false
+    url: ""          # e.g. http://homeassistant.local:8123
+    token: ""        # long-lived access token from HA profile
+    event_type: "spooky_alert"
+
+# ── Dashboard ────────────────────────────────────────────────────────────────
+dashboard:
+  host: "0.0.0.0"    # use 127.0.0.1 to restrict to localhost
+  port: 5000
+
+# ── Summarizer ────────────────────────────────────────────────────────────────
+summarizer:
+  hour: 3                   # 03:00 daily run
+  episode_threshold: 200    # also run if episodic count exceeds this
+
+# ── Experiments ───────────────────────────────────────────────────────────────
+experiments:
+  enabled: true
+  min_session_minutes: 15
+  cooldown_hours: 2
+  # List of experiment IDs to disable (leave empty to allow all)
+  disabled: []
+
+# ── Personality / interaction ─────────────────────────────────────────────────
+personality:
+  thought_interval_min_s: 120   # autonomous thoughts / idle speech
+  thought_interval_max_s: 300
+  greet_same_person_cooldown_s: 300
+  max_history_turns: 10         # LLM context window in turns

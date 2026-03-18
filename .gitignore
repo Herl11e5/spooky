@@ -1,0 +1,64 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+.env/
+robot-core/venv/
+
+# ── Runtime data (never commit) ───────────────────────────────────────────────
+robot-core/data/
+robot-core/logs/
+data/
+logs/
+*.db
+*.db-wal
+*.db-shm
+
+# ── Secrets / local config ────────────────────────────────────────────────────
+robot-core/config/local.yaml
+config/local.yaml
+.env
+*.env
+
+# ── Face database (biometric data — never commit) ─────────────────────────────
+robot-core/data/faces/
+faces/
+
+# ── Snapshots (event captures) ────────────────────────────────────────────────
+robot-core/data/snapshots/
+snapshots/
+
+# ── Audio temp files ──────────────────────────────────────────────────────────
+/tmp/spooky_*.wav
+*.wav
+
+# ── Vosk models (large binaries — download on device) ────────────────────────
+vosk-model*/
+
+# ── Ollama models (managed by ollama, not git) ────────────────────────────────
+*.gguf
+*.bin
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Test artifacts ────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/

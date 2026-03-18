@@ -1,0 +1,53 @@
+# robot-core/config/local.yaml
+# Copia questo file in local.yaml e personalizzalo.
+# local.yaml è in .gitignore — non viene mai committato.
+#
+# I valori qui sovrascrivono robot.yaml (deep merge).
+
+robot:
+  name: "Spooky"
+
+# ── Override modalità ─────────────────────────────────────────────────────────
+# modes:
+#   night_watch_start: "22:30"
+#   night_watch_end:   "07:30"
+
+# ── Telegram alert (opzionale) ────────────────────────────────────────────────
+# alerts:
+#   telegram:
+#     enabled: true
+#     token: "123456789:ABCdef-il-tuo-token"
+#     chat_id: "123456789"
+
+# ── Webhook (opzionale) ───────────────────────────────────────────────────────
+# alerts:
+#   webhook:
+#     enabled: true
+#     url: "http://192.168.1.10:8080/spooky/alert"
+
+# ── Home Assistant (opzionale) ────────────────────────────────────────────────
+# alerts:
+#   home_assistant:
+#     enabled: true
+#     url: "http://homeassistant.local:8123"
+#     token: "il-tuo-long-lived-token"
+
+# ── Dashboard (se vuoi limitare l'accesso) ────────────────────────────────────
+# dashboard:
+#   host: "127.0.0.1"   # solo localhost
+#   port: 5000
+
+# ── Night watch silenziosa o con voce ────────────────────────────────────────
+# night_watch:
+#   silent_alerts: false     # parla quando rileva qualcosa
+#   save_jpeg: true          # salva foto su evento L2+
+
+# ── LLM: modello diverso ─────────────────────────────────────────────────────
+# llm:
+#   model_priority:
+#     - "llama3.2:3b"        # usa 3b se disponibile
+#     - "llama3.2:1b"
+
+# ── Logging verboso per debug ─────────────────────────────────────────────────
+# logging:
+#   level: "DEBUG"

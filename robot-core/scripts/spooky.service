@@ -1,0 +1,27 @@
+[Unit]
+Description=Spooky Robot Companion
+After=network.target sound.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__CORE_DIR__
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=__CORE_DIR__
+ExecStart=__VENV__/bin/python __CORE_DIR__/main.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spooky
+
+# Limiti risorse (evita OOM completo del sistema)
+MemoryMax=6G
+MemorySwapMax=512M
+
+# Permessi hardware
+SupplementaryGroups=video audio gpio i2c spi
+
+[Install]
+WantedBy=multi-user.target

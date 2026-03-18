@@ -1,0 +1,33 @@
+# robot-core/requirements.txt
+# ── Core (all platforms) ──────────────────────────────────────────────────────
+pyyaml
+numpy
+
+# ── Vision ────────────────────────────────────────────────────────────────────
+opencv-contrib-python
+
+# ── LLM / AI ─────────────────────────────────────────────────────────────────
+ollama
+
+# ── Voice ────────────────────────────────────────────────────────────────────
+vosk
+sounddevice
+
+# ── Flask dashboard ───────────────────────────────────────────────────────────
+flask
+
+# ── RPi-only (installed via apt on Raspberry Pi) ─────────────────────────────
+# python3-picamera2       → sudo apt install python3-picamera2
+# python3-libcamera       → sudo apt install python3-libcamera
+
+# ── RPi-only (SunFounder, pip, Python 3.11 only) ─────────────────────────────
+# picrawler               → pip install picrawler
+# robot-hat               → pip install robot-hat
+
+# ── Optional: face recognition (Phase 2) ─────────────────────────────────────
+# face-recognition        → pip install face-recognition  (requires dlib)
+# insightface             → lighter alternative on ARM
+
+# ── Optional: wake word (Phase 2) ────────────────────────────────────────────
+# openwakeword            → pip install openwakeword
+# pvporcupine             → Picovoice Porcupine (requires API key)
