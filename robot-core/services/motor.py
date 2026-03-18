@@ -99,27 +99,40 @@ class MotorService:
             self._crawler = None
             return
 
-        # Detect pan/tilt method names (API differs across picrawler versions)
-        self._pan_fn  = self._resolve_method(
-            "set_cam_pan_angle", "cam_pan_angle", "set_pan_angle",
-            "set_cam_pan", "cam_pan",
+        # Detect pan/tilt callable.
+        # Priority: dedicated method > set_angle(servo_idx, angle)
+        n_servos = len(self._crawler.servo_list) if hasattr(self._crawler, "servo_list") else 0
+        # PiCrawler v2: 12 leg servos + servo 12=pan, 13=tilt
+        pan_idx  = n_servos - 2 if n_servos >= 14 else 12
+        tilt_idx = n_servos - 1 if n_servos >= 14 else 13
+
+        self._pan_fn  = self._resolve_cam_fn(
+            ["set_cam_pan_angle", "cam_pan_angle", "set_pan_angle", "set_cam_pan"],
+            fallback_fn=getattr(self._crawler, "set_angle", None),
+            fallback_idx=pan_idx,
         )
-        self._tilt_fn = self._resolve_method(
-            "set_cam_tilt_angle", "cam_tilt_angle", "set_tilt_angle",
-            "set_cam_tilt", "cam_tilt",
+        self._tilt_fn = self._resolve_cam_fn(
+            ["set_cam_tilt_angle", "cam_tilt_angle", "set_tilt_angle", "set_cam_tilt"],
+            fallback_fn=getattr(self._crawler, "set_angle", None),
+            fallback_idx=tilt_idx,
         )
         log.info(
-            f"MotorService: pan_fn={self._pan_fn.__name__ if self._pan_fn else 'None'}"
-            f"  tilt_fn={self._tilt_fn.__name__ if self._tilt_fn else 'None'}"
+            f"MotorService: servos={n_servos}  "
+            f"pan_fn={getattr(self._pan_fn,'__name__','<lambda>')}  "
+            f"tilt_fn={getattr(self._tilt_fn,'__name__','<lambda>')}"
         )
 
-    def _resolve_method(self, *names):
-        """Return the first matching bound method from self._crawler, or None."""
+    def _resolve_cam_fn(self, names, fallback_fn, fallback_idx):
+        """Return a callable(angle) for a camera servo axis."""
         for name in names:
             m = getattr(self._crawler, name, None)
             if callable(m):
                 return m
-        log.warning(f"MotorService: no pan/tilt method found among {names} — head will not move")
+        # Fall back to set_angle(idx, angle) if available
+        if callable(fallback_fn):
+            idx = fallback_idx
+            return lambda angle, _fn=fallback_fn, _i=idx: _fn(_i, angle)
+        log.warning("MotorService: no cam method found — head pan/tilt disabled")
         return None
 
     def shutdown(self) -> None:
