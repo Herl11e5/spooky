@@ -38,7 +38,7 @@ log = logging.getLogger(__name__)
 class DriveState:
     energy:              float = 0.9
     social_drive:        float = 0.5
-    curiosity:           float = 0.6
+    curiosity:           float = 0.7
     attention:           float = 0.0
     interaction_fatigue: float = 0.0
 

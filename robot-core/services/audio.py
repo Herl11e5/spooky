@@ -212,6 +212,7 @@ class AudioInput:
         samplerate: int = 16000,
         blocksize: int = 8000,
         command_timeout_s: float = 6.0,
+        device: Optional[int] = None,
     ):
         self._bus             = bus
         self._wake_word       = wake_word.lower()
@@ -219,6 +220,7 @@ class AudioInput:
         self._samplerate      = samplerate
         self._blocksize       = blocksize
         self._command_timeout = command_timeout_s
+        self._device          = device   # None = sounddevice default
 
         self._active  = False
         self._state   = self._STATE_IDLE
@@ -274,13 +276,22 @@ class AudioInput:
         rec   = vosk.KaldiRecognizer(model, self._samplerate)
 
         log.info("AudioInput: Vosk model loaded, listening…")
+        # Log available devices to help debug on RPi
         try:
-            with sd.RawInputStream(
-                samplerate=self._samplerate,
-                blocksize=self._blocksize,
-                dtype="int16",
-                channels=1,
-            ) as stream:
+            log.info(f"AudioInput: audio devices: {sd.query_devices()}")
+        except Exception:
+            pass
+        self._bus.publish(EventType.MIC_STATE_CHANGED, {"state": "idle"}, source="AudioInput")
+        stream_kwargs = dict(
+            samplerate=self._samplerate,
+            blocksize=self._blocksize,
+            dtype="int16",
+            channels=1,
+        )
+        if self._device is not None:
+            stream_kwargs["device"] = self._device
+        try:
+            with sd.RawInputStream(**stream_kwargs) as stream:
                 while self._active:
                     data, _ = stream.read(self._blocksize)
                     if rec.AcceptWaveform(bytes(data)):
@@ -340,9 +351,11 @@ class AudioInput:
         self._command_parts = []
 
         if not cmd:
+            self._bus.publish(EventType.MIC_STATE_CHANGED, {"state": "idle"}, source="AudioInput")
             return
 
         log.info(f"Command: '{cmd}'")
+        self._bus.publish(EventType.MIC_STATE_CHANGED, {"state": "thinking"}, source="AudioInput")
         self._bus.publish(
             EventType.COMMAND_PARSED,
             {"command": cmd},
@@ -353,6 +366,8 @@ class AudioInput:
                 self._on_command(cmd)
             except Exception as e:
                 log.error(f"AudioInput command handler: {e}")
+        # Return to idle once command has been dispatched
+        self._bus.publish(EventType.MIC_STATE_CHANGED, {"state": "idle"}, source="AudioInput")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -379,6 +394,7 @@ class AudioService:
         vosk_model = audio_cfg.get("vosk_model", "~/vosk-model-it")
         samplerate = audio_cfg.get("samplerate", 16000)
         blocksize  = audio_cfg.get("blocksize",  8000)
+        device     = audio_cfg.get("mic_device", None)   # None = sounddevice default
 
         self._out = AudioOutput(bus, language=lang, method=tts_method)
         self._inp = AudioInput(
@@ -387,6 +403,7 @@ class AudioService:
             vosk_model_path=vosk_model,
             samplerate=samplerate,
             blocksize=blocksize,
+            device=device,
         )
 
     def start(self) -> None:

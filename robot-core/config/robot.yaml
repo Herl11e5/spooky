@@ -30,7 +30,7 @@ safety:
   warn_cpu_temp_c: 70.0
   min_ram_mb: 300
   warn_ram_mb: 600
-  max_actuator_errors: 5
+  max_actuator_errors: 50
   watchdog_interval_s: 2.0
 
 # ── Sensors ───────────────────────────────────────────────────────────────────
@@ -78,6 +78,8 @@ audio:
   samplerate: 16000
   blocksize: 8000
   tts_method: "auto"          # auto / espeak_aplay / pyttsx3 / silent
+  # mic_device: 1              # uncomment + set index if sounddevice picks wrong mic
+                                # check with: python3 -c "import sounddevice; print(sounddevice.query_devices())"
 
 # ── Camera ───────────────────────────────────────────────────────────────────
 camera:

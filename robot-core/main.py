@@ -245,8 +245,9 @@ class RobotRuntime:
         self._experiments.start()
         self._night_watch.start()
         self._dashboard.start()
-        # Start face tracking immediately
+        # Start face tracking and idle behaviour immediately
         self._skill_track.start()
+        self._skill_idle.start()
         self._active = True
 
         log.info(f"Mode: {self._modes.current.value}")
