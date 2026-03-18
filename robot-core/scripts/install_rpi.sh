@@ -182,15 +182,21 @@ else
     ok "ollama già in esecuzione"
 fi
 
-# Pull modello testo base
-step "LLM model (llama3.2:1b)"
-if ollama list 2>/dev/null | grep -q "llama3.2:1b"; then
-    ok "llama3.2:1b già presente"
+# Pull modello testo — llama3.2:3b per RPi 5 con 8 GB RAM
+step "LLM model (llama3.2:3b)"
+if ollama list 2>/dev/null | grep -q "llama3.2:3b"; then
+    ok "llama3.2:3b già presente"
 else
-    log "  📥 Download llama3.2:1b (~700 MB)..."
-    ollama pull llama3.2:1b 2>&1 | tee -a "$LOG" \
-        && ok "llama3.2:1b scaricato" \
-        || warn "Download LLM fallito — puoi scaricarlo dopo con: ollama pull llama3.2:1b"
+    log "  📥 Download llama3.2:3b (~2 GB, migliore qualità)..."
+    ollama pull llama3.2:3b 2>&1 | tee -a "$LOG" \
+        && ok "llama3.2:3b scaricato" \
+        || warn "Download llama3.2:3b fallito — provo 1b come fallback..."
+    # Fallback a 1b se 3b fallisce
+    if ! ollama list 2>/dev/null | grep -q "llama3.2:3b"; then
+        ollama pull llama3.2:1b 2>&1 | tee -a "$LOG" \
+            && ok "llama3.2:1b scaricato (fallback)" \
+            || warn "Download LLM fallito — scaricalo dopo con: ollama pull llama3.2:3b"
+    fi
 fi
 
 # ── 9. Crea cartelle dati ─────────────────────────────────────────────────────

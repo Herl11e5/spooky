@@ -41,20 +41,21 @@ sensors:
 # ── LLM ──────────────────────────────────────────────────────────────────────
 llm:
   # Priority list — first available model wins
+  # RPi 5 8 GB: llama3.2:3b (~2 GB) is the sweet spot
   model_priority:
-    - "llama3.2:1b"
     - "llama3.2:3b"
     - "llama3.2"
-    - "llama3:8b"
     - "mistral:7b"
+    - "llama3:8b"
+    - "llama3.2:1b"
     - "gemma2:2b"
     - "phi3:mini"
     - "tinyllama"
-  temperature: 0.75
-  max_tokens: 180
+  temperature: 0.70
+  max_tokens: 200
   repeat_penalty: 1.1
-  keep_alive_s: 120           # keep text model loaded during conversation
-  min_ram_mb_to_infer: 800   # skip if RAM free < this
+  keep_alive_s: 180           # keep model loaded longer (8 GB can afford it)
+  min_ram_mb_to_infer: 600   # lowered — 8 GB has plenty of headroom
 
 # ── Vision LLM ────────────────────────────────────────────────────────────────
 vision_llm:
