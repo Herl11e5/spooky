@@ -141,7 +141,7 @@ class DashboardService:
         bus.subscribe(EventType.HEARTBEAT,       self._on_heartbeat)
         bus.subscribe(EventType.PERSON_IDENTIFIED,self._on_person)
         bus.subscribe(EventType.ALERT_RAISED,    self._on_alert)
-        bus.subscribe(EventType.WILDCARD,        self._on_any)
+        bus.subscribe("*",        self._on_any)
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
