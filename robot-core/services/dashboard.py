@@ -666,7 +666,7 @@ function addChat(role,text){
   const c=document.getElementById('chat');
   const d=document.createElement('div');
   d.className='msg '+role;
-  const icon=role==='spooky'?'🕷️':'role==='user'?'👤':'⚙️';
+  const icon=role==='spooky'?'🕷️':role==='user'?'👤':'⚙️';
   d.innerHTML=`<span>${icon} ${text}</span>`;
   c.appendChild(d);
   c.scrollTop=c.scrollHeight;
