@@ -248,9 +248,10 @@ if [ -f "$SERVICE_SRC" ]; then
         -e "s|__USER__|$(whoami)|g" \
         "$SERVICE_SRC" | sudo tee "$SERVICE_DST" > /dev/null
     sudo systemctl daemon-reload
-    sudo systemctl enable spooky.service
-    ok "Servizio systemd installato e abilitato"
-    log "  Comandi: sudo systemctl start|stop|status|logs spooky"
+    sudo systemctl disable spooky.service 2>/dev/null || true
+    ok "Servizio systemd installato (NON abilitato — avvio manuale)"
+    log "  Avvio manuale:   bash $CORE_DIR/scripts/start.sh"
+    log "  Abilita auto-avvio (opzionale): sudo systemctl enable spooky"
 else
     warn "spooky.service non trovato in $SERVICE_SRC"
 fi
