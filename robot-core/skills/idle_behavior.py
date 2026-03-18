@@ -65,20 +65,22 @@ class IdleBehaviorSkill(Skill):
     def _run(self) -> None:
         log.info("IdleBehaviorSkill: started")
         while not self.should_stop:
+            # While person present just wait — skill stays alive
             if self._person_present:
-                break
+                if not self.sleep(2.0):
+                    break
+                continue
+
             if not self._con.should_explore():
-                # Not curious enough right now — wait
-                if not self.sleep(10.0):
+                if not self.sleep(8.0):
                     break
                 continue
 
             behaviour = self._pick_behaviour()
-            log.debug(f"Idle behaviour: {behaviour}")
+            log.info(f"IdleBehaviorSkill: {behaviour}")
             self._execute(behaviour)
 
-            # Rest between behaviours
-            rest = random.uniform(4.0, 12.0)
+            rest = random.uniform(3.0, 8.0)
             if not self.sleep(rest):
                 break
 
@@ -89,13 +91,12 @@ class IdleBehaviorSkill(Skill):
 
     def _pick_behaviour(self) -> str:
         curiosity = self._con.state.curiosity
-        # Higher curiosity → more active choices
         if curiosity > 0.8:
-            choices = ["look_around", "look_around", "curiosity_pan", "micro_move"]
-        elif curiosity > 0.6:
-            choices = ["look_around", "curiosity_pan", "curiosity_pan", "yawn"]
+            choices = ["walk", "walk", "look_around", "curiosity_pan", "walk"]
+        elif curiosity > 0.5:
+            choices = ["walk", "look_around", "curiosity_pan", "walk", "yawn"]
         else:
-            choices = ["curiosity_pan", "yawn", "yawn"]
+            choices = ["walk", "curiosity_pan", "yawn", "look_around"]
         return random.choice(choices)
 
     def _execute(self, behaviour: str) -> None:
@@ -106,20 +107,34 @@ class IdleBehaviorSkill(Skill):
             self._choreo.play("look_around", wait=True)
 
         elif behaviour == "curiosity_pan":
-            pan  = random.randint(-50, 50)
+            pan  = random.randint(-55, 55)
             tilt = random.randint(-10, 15)
             self._motor.look_at(pan=pan, tilt=tilt)
             self.sleep(random.uniform(1.5, 3.0))
             self._motor.look_center()
 
-        elif behaviour == "micro_move":
+        elif behaviour == "walk":
             if self._safety.is_obstacle_blocked:
+                # Can't go forward — turn instead
+                self._motor.turn_left(speed=40)
+                self.sleep(0.8)
+                self._motor.stop()
                 return
-            self._motor.forward(speed=25)
-            self.sleep(0.4)
-            self._motor.backward(speed=25)
-            self.sleep(0.4)
+            steps = random.randint(2, 5)
+            speed = random.randint(40, 55)
+            for _ in range(steps):
+                if self.should_stop or self._person_present or self._safety.is_obstacle_blocked:
+                    break
+                self._motor.forward(speed=speed)
+                self.sleep(0.5)
             self._motor.stop()
+            self.sleep(0.3)
+            # Occasionally turn after walking
+            if random.random() < 0.5:
+                turn = self._motor.turn_left if random.random() < 0.5 else self._motor.turn_right
+                turn(speed=38)
+                self.sleep(random.uniform(0.4, 0.9))
+                self._motor.stop()
 
         elif behaviour == "yawn":
             self._motor.look_at(pan=0, tilt=-20)
@@ -129,11 +144,10 @@ class IdleBehaviorSkill(Skill):
     # ── event handlers ────────────────────────────────────────────────────────
 
     def _on_person(self, ev) -> None:
-        self._person_present = True
-        self.stop()
+        self._person_present = True   # _run() will pause; skill stays alive
 
     def _on_person_lost(self, ev) -> None:
-        self._person_present = False
+        self._person_present = False  # _run() will resume exploration
 
     def _on_mode(self, ev) -> None:
         to = ev.get("to", "")

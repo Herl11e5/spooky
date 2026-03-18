@@ -149,25 +149,27 @@ class MotorService:
             log.debug("forward() suppressed — obstacle")
             return
         speed = self._safety.clamp_speed(speed)
-        self._cmd(lambda: self._crawler.do_action("forward", 1, speed))
+        log.debug(f"forward speed={speed}")
+        self._cmd(lambda: self._crawler.do_action("forward", step=1, speed=speed))
         self._moving = True
 
     def backward(self, speed: int = 40) -> None:
         speed = self._safety.clamp_speed(speed)
-        self._cmd(lambda: self._crawler.do_action("backward", 1, speed))
+        log.debug(f"backward speed={speed}")
+        self._cmd(lambda: self._crawler.do_action("backward", step=1, speed=speed))
         self._moving = True
 
     def turn_left(self, speed: int = 40) -> None:
         speed = self._safety.clamp_speed(speed)
-        self._cmd(lambda: self._crawler.do_action("turn left", 1, speed))
+        self._cmd(lambda: self._crawler.do_action("turn left", step=1, speed=speed))
 
     def turn_right(self, speed: int = 40) -> None:
         speed = self._safety.clamp_speed(speed)
-        self._cmd(lambda: self._crawler.do_action("turn right", 1, speed))
+        self._cmd(lambda: self._crawler.do_action("turn right", step=1, speed=speed))
 
     def stop(self) -> None:
         self._moving = False
-        self._cmd(lambda: self._crawler.do_action("stand", 1))
+        self._cmd(lambda: self._crawler.do_action("stand", step=1))
 
     # ── posture ───────────────────────────────────────────────────────────────
 

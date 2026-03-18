@@ -69,7 +69,7 @@ shared = SharedState()
 class DashboardService:
     def __init__(self, bus, mode_manager, memory, alert_svc, conscience,
                  cmd_queue, cfg, night_watch=None, experiments=None,
-                 summarizer=None, learning=None, vision=None):
+                 summarizer=None, learning=None, vision=None, motor=None):
         self._bus = bus
         self._mm = mode_manager
         self._memory = memory
@@ -82,6 +82,7 @@ class DashboardService:
         self._summ = summarizer
         self._learn = learning
         self._vision = vision
+        self._motor = motor
         self._host = cfg.get("dashboard.host", "0.0.0.0")
         self._port = int(cfg.get("dashboard.port", 5000))
         self._sse_clients: list[queue.Queue] = []
@@ -192,6 +193,33 @@ class DashboardService:
                 return jsonify({"error": "unknown mode"}), 400
             ok = self._mm.request_transition(target, reason="dashboard")
             return jsonify({"ok": ok, "current": self._mm.current.value})
+
+        @app.route("/api/motor", methods=["POST"])
+        def api_motor():
+            if not self._motor:
+                return jsonify({"error": "no motor"}), 503
+            data   = request.get_json(silent=True) or {}
+            action = (data.get("action") or "").strip()
+            speed  = int(data.get("speed", 50))
+            dur    = float(data.get("duration", 0.8))
+            _m = self._motor
+            def _run():
+                if action == "forward":
+                    _m.forward(speed=speed); time.sleep(dur); _m.stop()
+                elif action == "backward":
+                    _m.backward(speed=speed); time.sleep(dur); _m.stop()
+                elif action == "left":
+                    _m.turn_left(speed=speed); time.sleep(dur); _m.stop()
+                elif action == "right":
+                    _m.turn_right(speed=speed); time.sleep(dur); _m.stop()
+                elif action == "stop":
+                    _m.stop()
+                elif action == "wave":
+                    _m.wave()
+                elif action == "center":
+                    _m.look_center()
+            threading.Thread(target=_run, daemon=True).start()
+            return jsonify({"ok": True, "action": action})
 
         @app.route("/stream")
         def stream():
@@ -650,6 +678,26 @@ body{background:var(--bg);color:var(--text);font-family:'Nunito',sans-serif;font
     </div>
   </div>
 
+  <!-- Controllo motori -->
+  <div class="card">
+    <h2>🕹️ Motori</h2>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.4rem;max-width:220px;margin:0 auto .5rem">
+      <div></div>
+      <button class="mbtn" onmousedown="motorHold('forward')" onmouseup="motorStop()" ontouchstart="motorHold('forward')" ontouchend="motorStop()">▲</button>
+      <div></div>
+      <button class="mbtn" onmousedown="motorHold('left')" onmouseup="motorStop()" ontouchstart="motorHold('left')" ontouchend="motorStop()">◀</button>
+      <button class="mbtn" onclick="motorCmd('stop')">■</button>
+      <button class="mbtn" onmousedown="motorHold('right')" onmouseup="motorStop()" ontouchstart="motorHold('right')" ontouchend="motorStop()">▶</button>
+      <div></div>
+      <button class="mbtn" onmousedown="motorHold('backward')" onmouseup="motorStop()" ontouchstart="motorHold('backward')" ontouchend="motorStop()">▼</button>
+      <div></div>
+    </div>
+    <div style="display:flex;gap:.4rem;justify-content:center">
+      <button class="mbtn" onclick="motorCmd('wave')">👋 Wave</button>
+      <button class="mbtn" onclick="motorCmd('center')">🎯 Centro</button>
+    </div>
+  </div>
+
   <!-- Chat -->
   <div class="card" style="flex:1">
     <h2>💬 Chat</h2>
@@ -919,6 +967,20 @@ async function sendCmd(){
 async function sendRaw(cmd){ addBubble('user',cmd); await fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:cmd})}); }
 async function setMode(m){ await fetch('/api/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:m})}); }
 async function summarize(){ await fetch('/api/summarize',{method:'POST'}); addBubble('system','Riassunto avviato…'); }
+
+let _motorTimer=null;
+async function motorCmd(action,speed=50,duration=0.8){
+  await fetch('/api/motor',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action,speed,duration})});
+}
+function motorHold(action){
+  motorCmd(action,55,2.0);
+  _motorTimer=setInterval(()=>motorCmd(action,55,2.0),2100);
+}
+function motorStop(){
+  clearInterval(_motorTimer); _motorTimer=null;
+  motorCmd('stop');
+}
 </script>
 </body>
 </html>
