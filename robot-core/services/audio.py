@@ -268,33 +268,43 @@ class AudioInput:
 
     def _run(self) -> None:
         import json
+        import audioop
         import vosk
         import sounddevice as sd
 
         vosk.SetLogLevel(-1)
         model = vosk.Model(str(self._vosk_model_path))
-        rec   = vosk.KaldiRecognizer(model, self._samplerate)
+        # Vosk always expects 16000 Hz
+        rec = vosk.KaldiRecognizer(model, 16000)
 
-        log.info("AudioInput: Vosk model loaded, listening…")
-        # Log available devices to help debug on RPi
-        try:
-            log.info(f"AudioInput: audio devices: {sd.query_devices()}")
-        except Exception:
-            pass
+        # Auto-detect a working sample rate for the device
+        hw_rate = self._detect_samplerate(sd)
+        log.info(f"AudioInput: using hw_rate={hw_rate} Hz (Vosk target=16000 Hz)")
         self._bus.publish(EventType.MIC_STATE_CHANGED, {"state": "idle"}, source="AudioInput")
+
+        # blocksize scaled to hw_rate so each chunk is ~0.5s
+        blocksize = int(hw_rate * 0.5)
         stream_kwargs = dict(
-            samplerate=self._samplerate,
-            blocksize=self._blocksize,
+            samplerate=hw_rate,
+            blocksize=blocksize,
             dtype="int16",
             channels=1,
         )
         if self._device is not None:
             stream_kwargs["device"] = self._device
+
+        resample_state = None   # audioop.ratecv state
         try:
             with sd.RawInputStream(**stream_kwargs) as stream:
                 while self._active:
-                    data, _ = stream.read(self._blocksize)
-                    if rec.AcceptWaveform(bytes(data)):
+                    data, _ = stream.read(blocksize)
+                    raw = bytes(data)
+                    # Resample to 16000 Hz if needed
+                    if hw_rate != 16000:
+                        raw, resample_state = audioop.ratecv(
+                            raw, 2, 1, hw_rate, 16000, resample_state
+                        )
+                    if rec.AcceptWaveform(raw):
                         result = json.loads(rec.Result())
                         text   = result.get("text", "").strip()
                         if text:
@@ -305,6 +315,20 @@ class AudioInput:
                             self._handle_text(partial, final=False)
         except Exception as e:
             log.error(f"AudioInput stream error: {e}")
+
+    def _detect_samplerate(self, sd) -> int:
+        """Try rates in order; return the first one the device accepts."""
+        candidates = [16000, 44100, 48000, 32000, 22050, 8000]
+        dev = self._device  # None = default input
+        for rate in candidates:
+            try:
+                sd.check_input_settings(device=dev, samplerate=rate,
+                                        channels=1, dtype="int16")
+                return rate
+            except Exception:
+                continue
+        log.warning("AudioInput: could not detect sample rate, falling back to 44100")
+        return 44100
 
     # ── state machine ──────────────────────────────────────────────────────────
 
