@@ -145,6 +145,8 @@ class RobotRuntime:
         self._mind = MindService(
             self._bus, self._modes, brain, self._audio, self._memory, cfg,
             vision=self._vision,
+            motor=self._motor,
+            sensor=self._sensor,
         )
         # Share the global ollama lock so vision + mind + summarizer never load two models at once
         _lock = get_ollama_lock()
@@ -217,6 +219,7 @@ class RobotRuntime:
             motor        = self._motor,
             audio        = self._audio,
             mind         = self._mind,
+            sensor       = self._sensor,
         )
 
         # ── Subscribe to lifecycle events ─────────────────────────────────────

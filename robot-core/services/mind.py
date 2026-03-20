@@ -235,6 +235,8 @@ class MindService:
         memory,   # MemoryService
         cfg,
         vision=None,   # VisionService (optional, for enrollment + scene replies)
+        motor=None,    # MotorService (optional, for scan)
+        sensor=None,   # SensorService (optional, for scan)
     ):
         self._bus    = bus
         self._mm     = mode_manager
@@ -243,6 +245,8 @@ class MindService:
         self._memory = memory
         self._cfg    = cfg
         self._vision = vision
+        self._motor  = motor
+        self._sensor = sensor
 
         # Cooldowns
         self._greet_cooldown   = cfg.get("personality.greet_same_person_cooldown_s", 300)
@@ -318,8 +322,19 @@ class MindService:
             self._audio.say(summary or "Non ricordo nulla di recente.")
             return
 
+        # "scansiona" — environment scan
+        if any(w in cmd_lo for w in ("scansiona", "mappa", "guarda intorno", "esplora")):
+            if self._motor and self._sensor:
+                self._audio.say("Avvio scansione dell'ambiente, un momento.")
+                threading.Thread(
+                    target=self._do_scan, daemon=True, name="VoiceScan"
+                ).start()
+            else:
+                self._audio.say("Non ho i motori o i sensori disponibili.")
+            return
+
         # "cosa vedi" — answer from latest scene/objects without LLM
-        if any(w in cmd_lo for w in ("cosa vedi", "cosa c'è", "guarda", "descrivi")):
+        if any(w in cmd_lo for w in ("cosa vedi", "cosa c'è", "descrivi")):
             scene   = self._vision.last_scene   if self._vision else ""
             objects = self._vision.last_objects if self._vision else ""
             if scene:
@@ -403,6 +418,20 @@ class MindService:
                 f"Non sono riuscito a memorizzarti {name}. "
                 "Assicurati che il viso sia ben visibile alla telecamera e riprova."
             )
+
+    def _do_scan(self) -> None:
+        try:
+            readings = self._motor.scan_environment(self._sensor.get_distance_cm, n_steps=12)
+            close = [r for r in readings if r["dist"] < 50]
+            if close:
+                dirs = ", ".join(f"{r['angle']}°" for r in close[:3])
+                self._audio.say(f"Scansione completata. Ostacoli vicini a: {dirs}.")
+            else:
+                self._audio.say("Scansione completata. Nessun ostacolo vicino.")
+            self._bus.publish(EventType.SCAN_COMPLETE, {"readings": readings}, source="MindService")
+        except Exception as e:
+            log.error(f"MindService scan error: {e}")
+            self._audio.say("Errore durante la scansione.")
 
     # ── face greeting ─────────────────────────────────────────────────────────
 

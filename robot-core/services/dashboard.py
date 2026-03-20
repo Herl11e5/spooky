@@ -70,7 +70,7 @@ class DashboardService:
     def __init__(self, bus, mode_manager, memory, alert_svc, conscience,
                  cmd_queue, cfg, night_watch=None, experiments=None,
                  summarizer=None, learning=None, vision=None, motor=None,
-                 audio=None, mind=None):
+                 audio=None, mind=None, sensor=None):
         self._bus = bus
         self._mm = mode_manager
         self._memory = memory
@@ -86,6 +86,8 @@ class DashboardService:
         self._motor = motor
         self._audio = audio
         self._mind = mind
+        self._sensor = sensor
+        self._last_scan: list = []
         self._host = cfg.get("dashboard.host", "0.0.0.0")
         self._port = int(cfg.get("dashboard.port", 5000))
         self._sse_clients: list[queue.Queue] = []
@@ -180,6 +182,24 @@ class DashboardService:
                 diag["llm_model"] = getattr(brain, "_model", None)
                 diag["llm_ok"] = getattr(brain, "_ok", False)
             return jsonify(diag)
+
+        @app.route("/api/scan", methods=["POST"])
+        def api_scan():
+            if not self._motor or not self._sensor:
+                return jsonify({"error": "motor/sensor not available"}), 503
+            import threading as _th
+            def _do_scan():
+                readings = self._motor.scan_environment(
+                    self._sensor.get_distance_cm, n_steps=12, speed=30
+                )
+                self._last_scan = readings
+                self._broadcast({"type": "scan_complete", "readings": readings})
+            _th.Thread(target=_do_scan, daemon=True, name="EnvScan").start()
+            return jsonify({"status": "scanning"})
+
+        @app.route("/api/scan", methods=["GET"])
+        def api_scan_get():
+            return jsonify({"readings": getattr(self, "_last_scan", [])})
 
         @app.route("/api/persons")
         def api_persons():
@@ -646,6 +666,36 @@ body{background:var(--bg);color:var(--text);font-family:'Nunito',sans-serif;font
     </div>
   </div>
 
+  <!-- Mappa ambiente -->
+  <div class="card" id="map-card">
+    <h2>🗺️ Mappa ambiente
+      <button id="btn-scan" onclick="startScan()" style="float:right;padding:.2rem .7rem;border-radius:1rem;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:.75rem">▶ Scansiona</button>
+    </h2>
+    <div style="display:flex;justify-content:center;align-items:center;min-height:180px">
+      <svg id="radar-svg" width="200" height="200" viewBox="-110 -110 220 220">
+        <!-- Cerchi di riferimento -->
+        <circle cx="0" cy="0" r="30"  fill="none" stroke="#333" stroke-width="0.5"/>
+        <circle cx="0" cy="0" r="60"  fill="none" stroke="#333" stroke-width="0.5"/>
+        <circle cx="0" cy="0" r="90"  fill="none" stroke="#333" stroke-width="0.5"/>
+        <!-- Assi -->
+        <line x1="0" y1="-95" x2="0" y2="95"  stroke="#333" stroke-width="0.5"/>
+        <line x1="-95" y1="0" x2="95" y2="0"  stroke="#333" stroke-width="0.5"/>
+        <!-- Etichette distanza -->
+        <text x="32" y="-26" fill="#555" font-size="7">50cm</text>
+        <text x="62" y="-56" fill="#555" font-size="7">100cm</text>
+        <!-- Robot al centro -->
+        <polygon points="0,-10 6,6 -6,6" fill="var(--accent)" opacity="0.9"/>
+        <!-- Settori scan (aggiornati da JS) -->
+        <g id="radar-sectors"></g>
+        <!-- Punti ostacolo -->
+        <g id="radar-dots"></g>
+        <!-- Freccia direzione -->
+        <text x="-4" y="-98" fill="var(--muted)" font-size="8">N</text>
+        <text id="scan-status" x="-50" y="108" fill="var(--muted)" font-size="8">Premi Scansiona</text>
+      </svg>
+    </div>
+  </div>
+
   <!-- Persona -->
   <div class="card">
     <h2>👤 Persona rilevata</h2>
@@ -986,9 +1036,14 @@ es.onmessage=e=>{
     if(d.type==='alert'){
       addLog('[ALERT L'+d.level+'] '+d.reason,'alert');
     }
+    if(d.type==='scan_complete'){
+      renderRadar(d.readings||[]);
+      const btn=document.getElementById('btn-scan');
+      if(btn) btn.disabled=false;
+    }
 
     // log
-    const skip=['ping','heartbeat','speech_transcribed','person_detected'].includes(d.type);
+    const skip=['ping','heartbeat','speech_transcribed','person_detected','scan_complete'].includes(d.type);
     if(!skip){
       const cls=d.type==='alert'?'alert':d.type.startsWith('tts')?'tts':
                d.type==='command'||d.type==='command_parsed'?'command':
@@ -998,6 +1053,85 @@ es.onmessage=e=>{
   }catch(err){}
 };
 es.onerror=()=>console.warn('SSE disconnected');
+
+/* ── RADAR MAP ── */
+const MAX_RADAR_R = 90;   // px → corrisponde a 200cm
+const MAX_DIST_CM = 200;  // distanza massima visualizzata
+
+function angleToXY(angleDeg, r){
+  // 0° = fronte (alto nell'SVG = -y)
+  const rad = (angleDeg - 90) * Math.PI / 180;
+  return {x: r * Math.cos(rad), y: r * Math.sin(rad)};
+}
+
+function renderRadar(readings){
+  const sectors = document.getElementById('radar-sectors');
+  const dots    = document.getElementById('radar-dots');
+  const status  = document.getElementById('scan-status');
+  if(!sectors || !readings.length) return;
+
+  sectors.innerHTML = '';
+  dots.innerHTML    = '';
+
+  const n = readings.length;
+  const stepDeg = 360 / n;
+
+  readings.forEach((r, i) => {
+    const dist = Math.min(r.dist >= 990 ? MAX_DIST_CM : r.dist, MAX_DIST_CM);
+    const frac = dist / MAX_DIST_CM;
+    const pr   = frac * MAX_RADAR_R;    // pixel radius
+    const a1   = i * stepDeg;
+    const a2   = (i + 1) * stepDeg;
+    const p0   = {x:0, y:0};
+    const p1   = angleToXY(a1, pr);
+    const p2   = angleToXY(a2, pr);
+
+    // Colore: verde=lontano, giallo=medio, rosso=vicino
+    const color = dist < 30 ? '#e74c3c' : dist < 80 ? '#f1c40f' : '#2ecc71';
+
+    // Settore a torta
+    const large = stepDeg > 180 ? 1 : 0;
+    const d = `M0,0 L${p1.x.toFixed(1)},${p1.y.toFixed(1)} A${pr.toFixed(1)},${pr.toFixed(1)} 0 ${large} 1 ${p2.x.toFixed(1)},${p2.y.toFixed(1)} Z`;
+    const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+    path.setAttribute('d', d);
+    path.setAttribute('fill', color);
+    path.setAttribute('opacity', '0.35');
+    path.setAttribute('stroke', color);
+    path.setAttribute('stroke-width', '0.5');
+    sectors.appendChild(path);
+
+    // Punto ostacolo (solo se non "infinito")
+    if(r.dist < 990){
+      const mid = angleToXY(a1 + stepDeg/2, pr);
+      const dot = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      dot.setAttribute('cx', mid.x.toFixed(1));
+      dot.setAttribute('cy', mid.y.toFixed(1));
+      dot.setAttribute('r', '3');
+      dot.setAttribute('fill', color);
+      dots.appendChild(dot);
+    }
+  });
+
+  if(status) status.textContent = `${n} letture — ${new Date().toLocaleTimeString('it')}`;
+}
+
+async function startScan(){
+  const btn = document.getElementById('btn-scan');
+  const status = document.getElementById('scan-status');
+  if(btn) btn.disabled = true;
+  if(status) status.textContent = 'Scansione in corso…';
+  try{
+    await fetch('/api/scan', {method:'POST'});
+    // risultato arriva via SSE scan_complete
+  } catch(e){
+    if(status) status.textContent = 'Errore scansione';
+  } finally {
+    setTimeout(()=>{ if(btn) btn.disabled=false; }, 15000);
+  }
+}
+
+// Carica ultima scansione all'avvio
+fetch('/api/scan').then(r=>r.json()).then(d=>{ if(d.readings&&d.readings.length) renderRadar(d.readings); });
 
 /* ── LOG ── */
 function addLog(txt,cls){

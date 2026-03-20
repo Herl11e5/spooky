@@ -79,6 +79,9 @@ class EventType:
     # Audio state
     MIC_STATE_CHANGED       = "mic_state_changed"   # {"state": "idle"|"listening"|"thinking"}
 
+    # Environment scan
+    SCAN_COMPLETE           = "scan_complete"        # {"readings": [{"angle":0,"dist":99.0}, ...]}
+
     # System
     HEARTBEAT               = "heartbeat"
     SHUTDOWN_REQUEST        = "shutdown_request"

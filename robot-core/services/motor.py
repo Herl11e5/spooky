@@ -238,6 +238,40 @@ class MotorService:
     def sim_mode(self) -> bool:
         return self._crawler is None
 
+    # ── environment scan ──────────────────────────────────────────────────────
+
+    def scan_environment(self, sensor_fn, n_steps: int = 12, speed: int = 30) -> list:
+        """
+        Rotate the robot 360° and read distance at each step.
+        sensor_fn: callable() → float (cm from SensorService.get_distance_cm)
+        Returns list of {"angle": deg, "dist": cm} dicts (0° = start heading).
+        """
+        import time as _time
+        step_deg  = 360 // n_steps          # ~30° per step
+        # How long to turn for one step — empirical: PiCrawler at speed=30
+        # turns ~30° in ~0.35s on smooth surface. Adjust in config if needed.
+        turn_s = 0.35
+        settle_s = 0.25     # wait after each turn for crawler to stabilise
+
+        readings = []
+        for i in range(n_steps):
+            angle = i * step_deg
+            _time.sleep(settle_s)
+            dist = sensor_fn()
+            readings.append({"angle": angle, "dist": round(dist, 1)})
+            log.debug(f"Scan step {i+1}/{n_steps}: {angle}° → {dist:.1f}cm")
+            if i < n_steps - 1:
+                # Turn right one step (non-blocking, direct command)
+                self._cmd(lambda: self._crawler.do_action("turn right", step=1, speed=speed))
+                _time.sleep(turn_s)
+
+        # Return robot to (approximately) original heading
+        # same number of steps as total scan — completes the full circle
+        self._cmd(lambda: self._crawler.do_action("turn right", step=1, speed=speed))
+        _time.sleep(turn_s)
+        self.stop()
+        return readings
+
     # ── internals ─────────────────────────────────────────────────────────────
 
     def _cmd(self, fn) -> None:
