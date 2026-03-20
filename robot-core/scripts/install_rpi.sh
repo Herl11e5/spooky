@@ -3,14 +3,14 @@
 #  install_rpi.sh — Setup completo Spooky su Raspberry Pi 5 (RPi OS Bookworm)
 #  Uso: bash ~/spooky/robot-core/scripts/install_rpi.sh
 # =============================================================================
-set -uo pipefail
+set -eo pipefail   # errexit + pipefail; NO -u (array vuoti sicuri in bash<5)
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CORE_DIR="$REPO_DIR/robot-core"
 VENV_DIR="$CORE_DIR/venv"
 LOG="$CORE_DIR/logs/install.log"
 
-mkdir -p "$CORE_DIR/logs" "$CORE_DIR/data"
+mkdir -p "$CORE_DIR/logs" "$CORE_DIR/data" "$CORE_DIR/data/faces" "$CORE_DIR/data/snapshots"
 
 echo "════════════════════════════════════════════════════════"
 echo " 🕷️  Spooky — Installazione su Raspberry Pi 5"
@@ -24,7 +24,6 @@ warn() { log "  ⚠️  $*"; }
 fail() { log "  ❌ $*"; exit 1; }
 step() { echo; log "── $* ──────────────────────────────────────────"; }
 
-# Traccia pacchetti falliti per il riepilogo finale
 FAILED_PKGS=()
 WARNINGS=()
 
@@ -32,7 +31,8 @@ WARNINGS=()
 step "Aggiornamento repository"
 if git -C "$REPO_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
     if git -C "$REPO_DIR" diff --quiet && git -C "$REPO_DIR" diff --cached --quiet; then
-        git -C "$REPO_DIR" pull --ff-only 2>&1 | tee -a "$LOG" && ok "Repository aggiornato" \
+        git -C "$REPO_DIR" pull --ff-only 2>&1 | tee -a "$LOG" \
+            && ok "Repository aggiornato" \
             || warn "git pull fallito — uso versione locale"
     else
         warn "Modifiche locali presenti — salto git pull"
@@ -74,7 +74,7 @@ sudo apt-get install -y "python${PYVER}-venv" "python${PYVER}-full" 2>&1 | tee -
     || sudo apt-get install -y python3-venv 2>&1 | tee -a "$LOG" \
     || warn "python${PYVER}-venv non disponibile"
 
-# ── 3. Dipendenze di sistema ──────────────────────────────────────────────────
+# ── 3. Pacchetti apt ──────────────────────────────────────────────────────────
 step "Pacchetti apt"
 APT_PKGS=(
     git curl unzip wget
@@ -89,6 +89,7 @@ APT_PKGS=(
     portaudio19-dev libsndfile1
     libgpiod2
     i2c-tools
+    libi2c-dev
 )
 sudo apt-get update -qq 2>&1 | tail -3 | tee -a "$LOG"
 for pkg in "${APT_PKGS[@]}"; do
@@ -104,6 +105,28 @@ for pkg in "${APT_PKGS[@]}"; do
         fi
     fi
 done
+
+# ── 3b. Abilita I2C e SPI (richiesto per MPU6050 + robot_hat) ────────────────
+step "Abilitazione I2C / SPI"
+if command -v raspi-config &>/dev/null; then
+    sudo raspi-config nonint do_i2c 0 2>/dev/null && ok "I2C abilitato" || warn "Abilitazione I2C fallita"
+    sudo raspi-config nonint do_spi 0 2>/dev/null && ok "SPI abilitato" || warn "Abilitazione SPI fallita"
+else
+    # Fallback diretto su /boot/firmware/config.txt
+    CONFIG_TXT="/boot/firmware/config.txt"
+    [ -f /boot/config.txt ] && CONFIG_TXT="/boot/config.txt"
+    if [ -f "$CONFIG_TXT" ]; then
+        grep -q "^dtparam=i2c_arm=on" "$CONFIG_TXT" \
+            || { echo "dtparam=i2c_arm=on" | sudo tee -a "$CONFIG_TXT" > /dev/null; ok "I2C abilitato in $CONFIG_TXT"; }
+        grep -q "^dtparam=spi=on" "$CONFIG_TXT" \
+            || { echo "dtparam=spi=on"     | sudo tee -a "$CONFIG_TXT" > /dev/null; ok "SPI abilitato in $CONFIG_TXT"; }
+    else
+        warn "config.txt non trovato — abilita I2C manualmente con raspi-config"
+        WARNINGS+=("I2C: abilitazione manuale richiesta (raspi-config → Interface Options → I2C)")
+    fi
+fi
+# Aggiungi utente al gruppo i2c
+sudo usermod -aG i2c "$(whoami)" 2>/dev/null || true
 
 # ── 4. Virtual environment ────────────────────────────────────────────────────
 step "Virtual environment"
@@ -122,29 +145,37 @@ fi
 # shellcheck disable=SC1090
 source "$VENV_DIR/bin/activate"
 ok "venv attivato: $(python --version)"
+PIP="$VENV_DIR/bin/pip"   # pip esplicito del venv
 
 # ── 5. pip upgrade ────────────────────────────────────────────────────────────
 step "pip"
-pip install --upgrade pip setuptools wheel --quiet 2>&1 | tee -a "$LOG"
-ok "pip $(pip --version | cut -d' ' -f2)"
+"$PIP" install --upgrade pip setuptools wheel --quiet 2>&1 | tee -a "$LOG"
+ok "pip $("$PIP" --version | cut -d' ' -f2)"
 
 # ── 6a. SunFounder robot-hat ──────────────────────────────────────────────────
 step "SunFounder robot-hat v2.0"
 ROBOTHAT_DIR="$HOME/robot-hat"
 if python -c "import robot_hat" &>/dev/null 2>&1; then
-    ok "robot-hat già installato"
+    ok "robot-hat già importabile dal venv"
 else
     log "  ⏳ Clone robot-hat v2.0..."
     rm -rf "$ROBOTHAT_DIR"
-    git clone -b v2.0 https://github.com/sunfounder/robot-hat.git --depth 1 "$ROBOTHAT_DIR" \
-        2>&1 | tee -a "$LOG" || { warn "Clone robot-hat fallito"; WARNINGS+=("robot-hat: clone fallito"); }
-    if [ -f "$ROBOTHAT_DIR/install.py" ]; then
-        log "  ⏳ Installazione robot-hat..."
-        cd "$ROBOTHAT_DIR"
-        sudo python3 install.py 2>&1 | tee -a "$LOG" \
-            && ok "robot-hat installato" \
-            || { warn "robot-hat install.py fallito"; WARNINGS+=("robot-hat: install fallito"); }
-        cd -
+    if git clone -b v2.0 https://github.com/sunfounder/robot-hat.git --depth 1 "$ROBOTHAT_DIR" \
+            2>&1 | tee -a "$LOG"; then
+        if [ -f "$ROBOTHAT_DIR/install.py" ]; then
+            log "  ⏳ Installazione robot-hat (sistema + venv)..."
+            pushd "$ROBOTHAT_DIR" > /dev/null
+            # install.py fa setup sistema (GPIO, gruppi, config.txt)
+            sudo python3 install.py 2>&1 | tee -a "$LOG" || true
+            # installa il package Python nel nostro venv
+            "$PIP" install . --quiet 2>&1 | tee -a "$LOG" \
+                && ok "robot-hat installato nel venv" \
+                || { warn "pip install robot-hat fallito"; WARNINGS+=("robot-hat: pip install fallito"); }
+            popd > /dev/null
+        fi
+    else
+        warn "Clone robot-hat fallito"
+        WARNINGS+=("robot-hat: clone fallito")
     fi
 fi
 
@@ -152,19 +183,23 @@ fi
 step "SunFounder vilib"
 VILIB_DIR="$HOME/vilib"
 if python -c "import vilib" &>/dev/null 2>&1; then
-    ok "vilib già installato"
+    ok "vilib già importabile dal venv"
 else
     log "  ⏳ Clone vilib..."
     rm -rf "$VILIB_DIR"
-    git clone https://github.com/sunfounder/vilib.git --depth 1 "$VILIB_DIR" \
-        2>&1 | tee -a "$LOG" || { warn "Clone vilib fallito"; WARNINGS+=("vilib: clone fallito"); }
-    if [ -f "$VILIB_DIR/install.py" ]; then
-        log "  ⏳ Installazione vilib..."
-        cd "$VILIB_DIR"
-        sudo python3 install.py 2>&1 | tee -a "$LOG" \
-            && ok "vilib installato" \
-            || { warn "vilib install.py fallito (non bloccante)"; WARNINGS+=("vilib: install fallito"); }
-        cd -
+    if git clone https://github.com/sunfounder/vilib.git --depth 1 "$VILIB_DIR" \
+            2>&1 | tee -a "$LOG"; then
+        if [ -f "$VILIB_DIR/install.py" ]; then
+            pushd "$VILIB_DIR" > /dev/null
+            sudo python3 install.py 2>&1 | tee -a "$LOG" || true
+            "$PIP" install . --quiet 2>&1 | tee -a "$LOG" \
+                && ok "vilib installato nel venv" \
+                || { warn "pip install vilib fallito (non bloccante)"; WARNINGS+=("vilib: pip install fallito"); }
+            popd > /dev/null
+        fi
+    else
+        warn "Clone vilib fallito"
+        WARNINGS+=("vilib: clone fallito")
     fi
 fi
 
@@ -172,26 +207,30 @@ fi
 step "SunFounder picrawler"
 PICRAWLER_DIR="$HOME/picrawler"
 if python -c "from picrawler import Picrawler" &>/dev/null 2>&1; then
-    ok "picrawler già installato"
+    ok "picrawler già importabile dal venv"
 else
     log "  ⏳ Clone picrawler..."
     rm -rf "$PICRAWLER_DIR"
-    git clone https://github.com/sunfounder/picrawler.git --depth 1 "$PICRAWLER_DIR" \
-        2>&1 | tee -a "$LOG" || { warn "Clone picrawler fallito"; WARNINGS+=("picrawler: clone fallito"); }
-    if [ -d "$PICRAWLER_DIR" ]; then
-        log "  ⏳ Installazione picrawler..."
-        cd "$PICRAWLER_DIR"
-        # setup.py install è deprecato — usa pip install . se disponibile
+    if git clone https://github.com/sunfounder/picrawler.git --depth 1 "$PICRAWLER_DIR" \
+            2>&1 | tee -a "$LOG"; then
+        pushd "$PICRAWLER_DIR" > /dev/null
         if [ -f "setup.cfg" ] || [ -f "pyproject.toml" ]; then
-            pip install . 2>&1 | tee -a "$LOG" \
+            "$PIP" install . --quiet 2>&1 | tee -a "$LOG" \
                 && ok "picrawler installato (pip)" \
-                || { warn "pip install . fallito, provo setup.py..."; sudo python3 setup.py install 2>&1 | tee -a "$LOG" || { warn "picrawler install fallito"; WARNINGS+=("picrawler: install fallito"); }; }
-        else
-            sudo python3 setup.py install 2>&1 | tee -a "$LOG" \
+                || { warn "pip install picrawler fallito"; WARNINGS+=("picrawler: pip install fallito"); }
+        elif [ -f "setup.py" ]; then
+            "$PIP" install . --quiet 2>&1 | tee -a "$LOG" \
+                || sudo python3 setup.py install 2>&1 | tee -a "$LOG" \
                 && ok "picrawler installato" \
-                || { warn "picrawler setup.py fallito"; WARNINGS+=("picrawler: install fallito"); }
+                || { warn "picrawler install fallito"; WARNINGS+=("picrawler: install fallito"); }
+        else
+            warn "picrawler: nessun file di installazione trovato"
+            WARNINGS+=("picrawler: setup.py/pyproject.toml non trovati")
         fi
-        cd -
+        popd > /dev/null
+    else
+        warn "Clone picrawler fallito"
+        WARNINGS+=("picrawler: clone fallito")
     fi
 fi
 
@@ -199,24 +238,24 @@ fi
 step "I2S amplifier (audio output)"
 if [ -f "$ROBOTHAT_DIR/i2samp.sh" ]; then
     log "  ⏳ Configurazione I2S amplifier..."
-    cd "$ROBOTHAT_DIR"
+    pushd "$ROBOTHAT_DIR" > /dev/null
     echo "y" | sudo bash i2samp.sh 2>&1 | tee -a "$LOG" \
         && ok "I2S amplifier configurato (attivo dopo reboot)" \
         || { warn "i2samp.sh fallito — audio output potrebbe non funzionare"; WARNINGS+=("I2S: configurazione fallita"); }
-    cd -
+    popd > /dev/null
 else
-    warn "i2samp.sh non trovato in $ROBOTHAT_DIR"
-    WARNINGS+=("I2S: i2samp.sh non trovato, audio output non configurato")
+    warn "i2samp.sh non trovato in $ROBOTHAT_DIR — robot-hat non clonato correttamente?"
+    WARNINGS+=("I2S: i2samp.sh non trovato")
 fi
 
-# ── 6e. Pacchetti Python ──────────────────────────────────────────────────────
+# ── 6e. Pacchetti Python nel venv ─────────────────────────────────────────────
 step "Pacchetti Python"
 
 _pip_install() {
     local pkg="$1"
     local desc="${2:-$1}"
     log "  ⏳ pip install $pkg..."
-    if pip install "$pkg" --quiet 2>&1 | tee -a "$LOG"; then
+    if "$PIP" install "$pkg" --quiet 2>&1 | tee -a "$LOG"; then
         ok "$desc"
     else
         warn "$desc — installazione fallita"
@@ -232,23 +271,25 @@ _pip_install "vosk"             "Vosk STT"
 _pip_install "sounddevice"      "sounddevice"
 _pip_install "requests"         "requests"
 _pip_install "psutil"           "psutil"
-_pip_install "smbus2"           "smbus2 (MPU6050 edge detection)"
+_pip_install "smbus2"           "smbus2 (I2C / MPU6050 edge detection)"
 
-# opencv: prova prima la versione completa, poi headless come fallback
+# opencv: prova prima la versione completa, poi headless
 log "  ⏳ pip install opencv-contrib-python..."
-if pip install opencv-contrib-python --quiet 2>&1 | tee -a "$LOG"; then
+if "$PIP" install opencv-contrib-python --quiet 2>&1 | tee -a "$LOG"; then
     ok "OpenCV (full)"
-elif pip install opencv-contrib-python-headless --quiet 2>&1 | tee -a "$LOG"; then
+elif "$PIP" install opencv-contrib-python-headless --quiet 2>&1 | tee -a "$LOG"; then
     ok "OpenCV (headless fallback)"
 else
-    warn "OpenCV — installazione fallita"
-    FAILED_PKGS+=("opencv-contrib-python")
+    warn "OpenCV pip fallito — provo pacchetto di sistema..."
+    sudo apt-get install -y python3-opencv 2>&1 | tee -a "$LOG" \
+        && ok "OpenCV (apt fallback)" \
+        || { warn "OpenCV — tutti i metodi falliti"; FAILED_PKGS+=("opencv"); }
 fi
 
 # ── 7. Vosk model italiano ────────────────────────────────────────────────────
 step "Modello Vosk italiano"
 VOSK_DIR="$HOME/vosk-model-it"
-if [ -d "$VOSK_DIR" ]; then
+if [ -d "$VOSK_DIR" ] && [ -f "$VOSK_DIR/conf/model.conf" ]; then
     ok "Vosk già presente: $VOSK_DIR"
 else
     log "  📥 Download vosk-model-small-it-0.22 (~50 MB)..."
@@ -259,6 +300,7 @@ else
         unzip -q "$VOSK_ZIP" -d "$HOME" 2>&1 | tee -a "$LOG"
         extracted=$(ls -d "$HOME"/vosk-model-small-it* 2>/dev/null | head -1)
         if [ -n "$extracted" ]; then
+            rm -rf "$VOSK_DIR"
             mv "$extracted" "$VOSK_DIR"
             ok "Vosk installato: $VOSK_DIR"
         else
@@ -300,58 +342,43 @@ else
     ok "ollama già in esecuzione"
 fi
 
-# ── Pull LLM testo: llama3.2:3b ───────────────────────────────────────────────
+# Pull LLM testo
 step "LLM model (llama3.2:3b)"
 if ollama list 2>/dev/null | grep -q "llama3.2:3b"; then
     ok "llama3.2:3b già presente"
 else
     log "  📥 Download llama3.2:3b (~2 GB)..."
-    set +e
-    ollama pull llama3.2:3b 2>&1 | tee -a "$LOG"
-    set -eo pipefail
+    ollama pull llama3.2:3b 2>&1 | tee -a "$LOG" || true
     if ollama list 2>/dev/null | grep -q "llama3.2"; then
         ok "llama3.2:3b scaricato"
     else
         warn "llama3.2:3b fallito — provo fallback llama3.2:1b..."
-        set +e
-        ollama pull llama3.2:1b 2>&1 | tee -a "$LOG"
-        set -eo pipefail
+        ollama pull llama3.2:1b 2>&1 | tee -a "$LOG" || true
         if ollama list 2>/dev/null | grep -q "llama3.2"; then
             ok "llama3.2:1b scaricato (fallback)"
         else
-            warn "❌ Download LLM fallito — esegui manualmente: ollama pull llama3.2:3b"
+            warn "Download LLM fallito — esegui: ollama pull llama3.2:3b"
             WARNINGS+=("LLM: nessun modello testo disponibile")
         fi
     fi
 fi
 
-# ── Pull modello visione: moondream ───────────────────────────────────────────
+# Pull modello visione
 step "Vision model (moondream)"
 if ollama list 2>/dev/null | grep -q "moondream"; then
     ok "moondream già presente"
 else
-    log "  📥 Download moondream (~1.6 GB) — riconoscimento oggetti e scene..."
-    set +e
-    ollama pull moondream 2>&1 | tee -a "$LOG"
-    set -eo pipefail
+    log "  📥 Download moondream (~1.6 GB)..."
+    ollama pull moondream 2>&1 | tee -a "$LOG" || true
     if ollama list 2>/dev/null | grep -q "moondream"; then
         ok "moondream scaricato"
     else
-        warn "❌ Download moondream fallito — esegui manualmente: ollama pull moondream"
-        WARNINGS+=("Vision: moondream non scaricato — riconoscimento oggetti non disponibile")
+        warn "Download moondream fallito — esegui: ollama pull moondream"
+        WARNINGS+=("Vision: moondream non scaricato")
     fi
 fi
 
-# ── 9. Struttura cartelle ─────────────────────────────────────────────────────
-step "Struttura dati"
-mkdir -p \
-    "$CORE_DIR/data" \
-    "$CORE_DIR/data/faces" \
-    "$CORE_DIR/data/snapshots" \
-    "$CORE_DIR/logs"
-ok "Cartelle create"
-
-# ── 10. Configurazione locale ─────────────────────────────────────────────────
+# ── 9. Configurazione locale ──────────────────────────────────────────────────
 step "Configurazione locale"
 LOCAL_CFG="$CORE_DIR/config/local.yaml"
 EXAMPLE_CFG="$CORE_DIR/config/local.yaml.example"
@@ -360,48 +387,55 @@ if [ ! -f "$LOCAL_CFG" ] && [ -f "$EXAMPLE_CFG" ]; then
     ok "Creato $LOCAL_CFG"
 elif [ -f "$LOCAL_CFG" ]; then
     ok "local.yaml già presente"
+else
+    warn "local.yaml.example non trovato — crea $LOCAL_CFG manualmente"
 fi
 
-# ── 11. Test audio ────────────────────────────────────────────────────────────
+# ── 10. Test audio ────────────────────────────────────────────────────────────
 step "Test audio"
 if command -v espeak-ng &>/dev/null && command -v aplay &>/dev/null; then
     TMP_WAV="/tmp/spooky_test.wav"
-    espeak-ng -v it -w "$TMP_WAV" "installazione completata" 2>/dev/null || true
+    espeak-ng -v it -w "$TMP_WAV" "ciao, installazione completata" 2>/dev/null || true
 
     log "  Dispositivi audio rilevati:"
     aplay -l 2>&1 | grep "^card" | while IFS= read -r l; do log "    $l"; done || true
 
-    # Costruisci lista dispositivi: prima il non-HDMI via nome CARD (stabile),
-    # poi plug:default come ultimo tentativo
+    # Costruisci lista: solo dispositivi non-HDMI tramite nome CARD stabile
     AUDIO_DEVS=()
     while IFS= read -r line; do
         low="${line,,}"
         if [[ "$line" == card* ]] && [[ "$low" != *hdmi* ]] && [[ "$low" != *vc4* ]]; then
-            # Estrai il nome stabile CARD (es. sndrpihifiberry, b1, Headphones)
             card_name=$(echo "$line" | sed -n 's/^card [0-9]*: \([^ ]*\).*/\1/p')
             if [ -n "$card_name" ]; then
                 AUDIO_DEVS+=("plughw:CARD=${card_name},DEV=0")
             fi
         fi
     done < <(aplay -l 2>/dev/null)
-    AUDIO_DEVS+=("plug:default")
 
-    PLAYED=0
-    for dev in "${AUDIO_DEVS[@]}"; do
-        if aplay -q -D "$dev" "$TMP_WAV" 2>/dev/null; then
-            ok "Audio OK — device: $dev"
-            PLAYED=1; break
-        fi
-    done
-    [ "$PLAYED" -eq 0 ] && { warn "Test audio fallito su tutti i dispositivi"; WARNINGS+=("Audio: nessun dispositivo funzionante"); }
+    if [ ${#AUDIO_DEVS[@]} -eq 0 ]; then
+        warn "Nessuna scheda audio non-HDMI trovata — REBOOT NECESSARIO dopo I2S setup"
+        WARNINGS+=("Audio: nessuna scheda non-HDMI — esegui reboot poi ritesta con: aplay -l")
+    else
+        PLAYED=0
+        for dev in "${AUDIO_DEVS[@]}"; do
+            if [ -f "$TMP_WAV" ] && aplay -q -D "$dev" "$TMP_WAV" 2>/dev/null; then
+                ok "Audio OK — device: $dev"
+                PLAYED=1; break
+            fi
+        done
+        [ "$PLAYED" -eq 0 ] && {
+            warn "Test audio fallito su tutti i dispositivi non-HDMI"
+            WARNINGS+=("Audio: test fallito — riprova dopo reboot")
+        }
+    fi
     rm -f "$TMP_WAV"
 else
     warn "espeak-ng o aplay non disponibili"
     WARNINGS+=("Audio: espeak-ng o aplay mancanti")
 fi
 
-# ── 12. Systemd service ───────────────────────────────────────────────────────
-step "Servizio systemd (avvio manuale)"
+# ── 11. Systemd service (avvio manuale) ──────────────────────────────────────
+step "Servizio systemd"
 SERVICE_SRC="$CORE_DIR/scripts/spooky.service"
 SERVICE_DST="/etc/systemd/system/spooky.service"
 if [ -f "$SERVICE_SRC" ]; then
@@ -412,29 +446,36 @@ if [ -f "$SERVICE_SRC" ]; then
         "$SERVICE_SRC" | sudo tee "$SERVICE_DST" > /dev/null
     sudo systemctl daemon-reload
     sudo systemctl disable spooky.service 2>/dev/null || true
-    ok "Servizio installato (NON auto-avviato)"
+    ok "Servizio installato (NON auto-avviato — usa start.sh)"
 else
-    warn "spooky.service non trovato in $SERVICE_SRC"
+    warn "spooky.service non trovato"
 fi
 
-# ── 13. Script di avvio ───────────────────────────────────────────────────────
+# ── 12. Script avvio ─────────────────────────────────────────────────────────
 step "Script start.sh"
-START_SCRIPT="$CORE_DIR/scripts/start.sh"
-if [ -f "$START_SCRIPT" ]; then
-    chmod +x "$START_SCRIPT"
+chmod +x "$CORE_DIR/scripts/"*.sh 2>/dev/null || true
+if [ -f "$CORE_DIR/scripts/start.sh" ]; then
     ok "start.sh pronto"
 fi
-chmod +x "$CORE_DIR/scripts/"*.sh 2>/dev/null || true
 
-# ── 14. Verifica importazioni chiave ─────────────────────────────────────────
+# ── 13. Verifica importazioni Python ─────────────────────────────────────────
 step "Verifica importazioni Python"
-VERIFY_MODS=(numpy cv2 flask vosk sounddevice ollama psutil yaml)
+VERIFY_MODS=(numpy cv2 flask vosk sounddevice ollama psutil yaml smbus2)
 for mod in "${VERIFY_MODS[@]}"; do
     if python -c "import $mod" &>/dev/null 2>&1; then
         ok "import $mod"
     else
         warn "import $mod FALLITO"
         FAILED_PKGS+=("$mod")
+    fi
+done
+
+# SunFounder libs — non bloccanti (possono mancare su macchine non-RPi)
+for mod in robot_hat picrawler picamera2; do
+    if python -c "import $mod" &>/dev/null 2>&1; then
+        ok "import $mod (hardware)"
+    else
+        warn "import $mod non disponibile (normale se non su RPi)"
     fi
 done
 
@@ -452,9 +493,12 @@ fi
 
 echo
 echo "   Modelli ollama installati:"
-ollama list 2>/dev/null | tail -n +2 | while IFS= read -r l; do echo "     $l"; done || echo "     (ollama non disponibile)"
+ollama list 2>/dev/null | tail -n +2 | while IFS= read -r l; do echo "     $l"; done \
+    || echo "     (ollama non disponibile)"
 echo
-echo "   ⚠️  REBOOT NECESSARIO per attivare I2S audio:"
+echo "   ⚠️  REBOOT NECESSARIO per:"
+echo "       - I2S audio (HifiBerry DAC)"
+echo "       - I2C (MPU6050 edge detection)"
 echo "       sudo reboot"
 echo
 echo "   Dopo il reboot:"
