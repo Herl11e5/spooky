@@ -160,9 +160,9 @@ class OllamaBrain:
         except ImportError:
             pass
 
-        # Try to acquire global lock (non-blocking)
-        if not _OLLAMA_GLOBAL_LOCK.acquire(blocking=False):
-            log.debug("OllamaBrain: ollama busy — using fallback")
+        # Wait up to 30 s for ollama lock (vision scene analysis can hold it briefly)
+        if not _OLLAMA_GLOBAL_LOCK.acquire(blocking=True, timeout=30):
+            log.warning("OllamaBrain: ollama lock timeout (30s) — using fallback")
             reply = random.choice(_FALLBACK_IT)
             with self._lock:
                 self._history.append({"role": "assistant", "content": reply})

@@ -69,7 +69,8 @@ shared = SharedState()
 class DashboardService:
     def __init__(self, bus, mode_manager, memory, alert_svc, conscience,
                  cmd_queue, cfg, night_watch=None, experiments=None,
-                 summarizer=None, learning=None, vision=None, motor=None):
+                 summarizer=None, learning=None, vision=None, motor=None,
+                 audio=None, mind=None):
         self._bus = bus
         self._mm = mode_manager
         self._memory = memory
@@ -83,6 +84,8 @@ class DashboardService:
         self._learn = learning
         self._vision = vision
         self._motor = motor
+        self._audio = audio
+        self._mind = mind
         self._host = cfg.get("dashboard.host", "0.0.0.0")
         self._port = int(cfg.get("dashboard.port", 5000))
         self._sse_clients: list[queue.Queue] = []
@@ -135,6 +138,48 @@ class DashboardService:
                 s["drives"] = self._conscience.to_dict()
             s["mode"] = self._mm.current.value
             return jsonify(s)
+
+        @app.route("/api/diag")
+        def api_diag():
+            import subprocess, shutil
+            diag = {}
+            # Ollama
+            try:
+                import ollama
+                models = [m.model for m in ollama.list().models]
+                diag["ollama"] = {"running": True, "models": models}
+            except Exception as e:
+                diag["ollama"] = {"running": False, "error": str(e)}
+            # espeak-ng
+            diag["espeak"] = shutil.which("espeak-ng") is not None
+            # aplay devices
+            try:
+                out = subprocess.check_output(["aplay", "-l"], stderr=subprocess.STDOUT,
+                                              timeout=3).decode(errors="replace")
+                diag["aplay_devices"] = [l for l in out.splitlines() if l.startswith("card")]
+            except Exception as e:
+                diag["aplay_devices"] = [str(e)]
+            # sounddevice mic devices
+            try:
+                import sounddevice as sd
+                devs = sd.query_devices()
+                diag["mic_devices"] = [
+                    {"idx": i, "name": d["name"], "rate": int(d["default_samplerate"])}
+                    for i, d in enumerate(devs) if d["max_input_channels"] > 0
+                ]
+                diag["mic_default"] = sd.default.device[0]
+            except Exception as e:
+                diag["mic_devices"] = []; diag["mic_default"] = str(e)
+            # Audio method
+            if self._audio:
+                diag["tts_method"] = getattr(self._audio.output, "_method", "?")
+                diag["stt_active"] = getattr(self._audio.input, "_active", False)
+            # LLM model
+            if self._mind:
+                brain = getattr(self._mind, "_brain", None)
+                diag["llm_model"] = getattr(brain, "_model", None)
+                diag["llm_ok"] = getattr(brain, "_ok", False)
+            return jsonify(diag)
 
         @app.route("/api/persons")
         def api_persons():

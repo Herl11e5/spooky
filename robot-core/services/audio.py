@@ -117,19 +117,35 @@ class AudioOutput:
         except Exception as e:
             log.error(f"TTS espeak-ng: {e}"); return
 
-        # Try multiple ALSA devices in order
+        # Try multiple ALSA devices in order (include USB PnP hw:2,0 and I2S)
         played = False
-        for dev_args in ([], ["-D", "plug:default"], ["-D", "plughw:0,0"]):
+        for dev_args in (
+            [],
+            ["-D", "plug:default"],
+            ["-D", "plughw:2,0"],   # USB PnP Sound Device (common on RPi)
+            ["-D", "plughw:1,0"],   # I2S amp after i2samp.sh
+            ["-D", "plughw:0,0"],
+        ):
             try:
                 subprocess.run(
                     ["aplay", "-q"] + dev_args + [wav_path],
                     check=True, capture_output=True, timeout=30,
                 )
+                log.debug(f"TTS: aplay ok with {dev_args or 'default'}")
                 played = True; break
             except subprocess.CalledProcessError as ae:
-                log.warning(f"TTS aplay {dev_args or 'default'}: {ae.stderr.decode(errors='replace')[:80]}")
+                log.debug(f"TTS aplay {dev_args or 'default'}: {ae.stderr.decode(errors='replace')[:60]}")
         if not played:
-            log.error("TTS: aplay failed on all devices — check /etc/asound.conf and volume")
+            # Last resort: espeak-ng direct output (no aplay)
+            log.warning("TTS: aplay failed on all devices — trying espeak-ng direct")
+            try:
+                subprocess.run(
+                    ["espeak-ng", "-v", self._lang, "-s", "145", text],
+                    check=True, capture_output=True, timeout=15,
+                )
+                played = True
+            except Exception as e2:
+                log.error(f"TTS: espeak-ng direct also failed — {e2}")
 
     def _espeak_paplay(self, text: str, wav_path: str) -> None:
         try:
@@ -333,10 +349,24 @@ class AudioInput:
         """Try rates in order; return the first one the device accepts."""
         candidates = [16000, 44100, 48000, 32000, 22050, 8000]
         dev = self._device  # None = default input
+
+        # Log available devices once for visibility
+        try:
+            devs = sd.query_devices()
+            inputs = [f"  {i}: {d['name']} ({int(d['default_samplerate'])}Hz)"
+                      for i, d in enumerate(devs) if d['max_input_channels'] > 0]
+            log.info("AudioInput devices:\n" + "\n".join(inputs) if inputs else "  (none)")
+            if dev is None and devs:
+                di = sd.default.device[0]
+                log.info(f"AudioInput: default input device [{di}]: {devs[di]['name']}")
+        except Exception as e:
+            log.debug(f"AudioInput: device query failed — {e}")
+
         for rate in candidates:
             try:
                 sd.check_input_settings(device=dev, samplerate=rate,
                                         channels=1, dtype="int16")
+                log.info(f"AudioInput: sample rate {rate} Hz accepted by device")
                 return rate
             except Exception:
                 continue

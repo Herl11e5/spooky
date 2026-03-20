@@ -215,6 +215,8 @@ class RobotRuntime:
             learning     = self._learning,
             vision       = self._vision,
             motor        = self._motor,
+            audio        = self._audio,
+            mind         = self._mind,
         )
 
         # ── Subscribe to lifecycle events ─────────────────────────────────────
