@@ -187,10 +187,14 @@ class DashboardService:
         @app.route("/api/sensors")
         def api_sensors():
             if self._sensor:
+                pitch, roll = self._sensor.get_pitch_roll()
                 return jsonify({
-                    "dist": round(self._sensor.get_distance_cm(), 1),
-                    "temp": round(self._sensor.get_cpu_temp_c(), 1),
-                    "ram":  self._sensor.get_ram_free_mb(),
+                    "dist":  round(self._sensor.get_distance_cm(), 1),
+                    "temp":  round(self._sensor.get_cpu_temp_c(), 1),
+                    "ram":   self._sensor.get_ram_free_mb(),
+                    "pitch": round(pitch, 1),
+                    "roll":  round(roll,  1),
+                    "edge_imu": self._sensor.edge_detector.available,
                 })
             s = shared.snapshot()
             return jsonify({
@@ -350,15 +354,40 @@ class DashboardService:
     def _mjpeg(self):
         try:
             import cv2
+            import numpy as np
         except ImportError:
             return
+
+        def _placeholder() -> bytes:
+            """400×300 dark frame with status text — sent when camera is not ready."""
+            img = np.zeros((300, 400, 3), dtype=np.uint8)
+            img[:] = (30, 30, 30)
+            cv2.putText(img, "Camera non disponibile", (30, 140),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (120, 120, 120), 1, cv2.LINE_AA)
+            cv2.putText(img, "verifica picamera2 / /dev/video0", (30, 170),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (80, 80, 80), 1, cv2.LINE_AA)
+            _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 60])
+            return buf.tobytes()
+
+        _ph = _placeholder()
+        _no_cam_streak = 0
+
         while True:
-            frame = self._vision.get_annotated_frame()
-            if frame is None:
-                time.sleep(0.1); continue
-            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 72])
-            if ok:
-                yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
+            try:
+                frame = self._vision.get_annotated_frame() if self._vision else None
+                if frame is None:
+                    _no_cam_streak += 1
+                    if _no_cam_streak % 20 == 1:   # ogni ~2s invia placeholder
+                        yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + _ph + b"\r\n"
+                    time.sleep(0.1)
+                    continue
+                _no_cam_streak = 0
+                ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 72])
+                if ok:
+                    yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
+            except Exception as e:
+                log.debug(f"MJPEG error: {e}")
+                time.sleep(0.5)
             time.sleep(0.05)
 
     def _broadcast(self, data: dict):
@@ -723,6 +752,18 @@ body{background:var(--bg);color:var(--text);font-family:'Nunito',sans-serif;font
         <div class="sv" id="v-ram">—</div>
         <div class="sl">RAM MB</div>
       </div>
+      <div class="sensor" id="s-pitch">
+        <div class="sv" id="v-pitch">—</div>
+        <div class="sl">Pitch °</div>
+      </div>
+      <div class="sensor" id="s-roll">
+        <div class="sv" id="v-roll">—</div>
+        <div class="sl">Roll °</div>
+      </div>
+      <div class="sensor" id="s-edge">
+        <div class="sv" id="v-edge" style="font-size:.9rem">OK</div>
+        <div class="sl">Bordo</div>
+      </div>
     </div>
     <div style="font-size:.58rem;color:var(--muted);text-align:right;margin-top:.2rem">
       heartbeat <span id="hb-age">—</span>
@@ -1025,14 +1066,33 @@ setInterval(()=>{
   el.textContent=s+'s fa';
   el.style.color=s>10?'var(--red)':s>5?'var(--yellow)':'var(--green)';
 },1000);
-function applySensors(dist,temp,ram){
-  _sens={dist,temp,ram,lastTs:Date.now()};
+function applySensors(dist,temp,ram,pitch,roll){
+  pitch=pitch||0; roll=roll||0;
+  _sens={dist,temp,ram,pitch,roll,lastTs:Date.now()};
   setSensor('s-dist','v-dist',dist>=990?'—':dist.toFixed(0)+' cm',
     ()=>dist<40, ()=>dist<20);
   setSensor('s-temp','v-temp',temp.toFixed(1)+'°C',
     ()=>temp>65, ()=>temp>75);
   setSensor('s-ram','v-ram',ram+' MB',
     ()=>ram<600, ()=>ram<300);
+  // Pitch / Roll
+  const pEl=document.getElementById('v-pitch');
+  const rEl=document.getElementById('v-roll');
+  const eEl=document.getElementById('v-edge');
+  const sP=document.getElementById('s-pitch');
+  const sR=document.getElementById('s-roll');
+  const sE=document.getElementById('s-edge');
+  if(pEl) pEl.textContent=pitch.toFixed(1)+'°';
+  if(rEl) rEl.textContent=roll.toFixed(1)+'°';
+  const edgeFwd  = pitch < -10;
+  const edgeBck  = pitch >  10;
+  const edgeLft  = roll  < -10;
+  const edgeRgt  = roll  >  10;
+  const onEdge   = edgeFwd||edgeBck||edgeLft||edgeRgt;
+  if(eEl) eEl.textContent = onEdge ? '⚠️ BORDO' : 'OK';
+  if(sP) sP.className='sensor'+(Math.abs(pitch)>10?' danger':Math.abs(pitch)>6?' warn':'');
+  if(sR) sR.className='sensor'+(Math.abs(roll) >10?' danger':Math.abs(roll) >6?' warn':'');
+  if(sE) sE.className='sensor'+(onEdge?' danger':'');
   document.getElementById('dot-obs').className=
     'dot '+(dist<20?'red':dist<40?'warn':'on');
 }
@@ -1043,7 +1103,7 @@ async function fetchSensors(){
     const dist=(d.dist!=null)?d.dist:999;
     const temp=(d.temp!=null)?d.temp:0;
     const ram=(d.ram!=null)?d.ram:0;
-    applySensors(dist,temp,ram);
+    applySensors(dist,temp,ram,d.pitch||0,d.roll||0);
   }catch(e){}
 }
 fetchSensors(); setInterval(fetchSensors,2000);
@@ -1148,7 +1208,7 @@ es.onmessage=e=>{
       const dist=(d.dist!=null)?d.dist:999;
       const temp=(d.temp!=null)?d.temp:0;
       const ram=(d.ram!=null)?d.ram:0;
-      applySensors(dist,temp,ram);
+      applySensors(dist,temp,ram,d.pitch_deg||0,d.roll_deg||0);
     }
     if(d.type==='obstacle'){
       document.getElementById('dot-obs').className='dot '+(d.blocked?'red':'on');

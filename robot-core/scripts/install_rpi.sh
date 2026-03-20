@@ -232,6 +232,7 @@ _pip_install "vosk"             "Vosk STT"
 _pip_install "sounddevice"      "sounddevice"
 _pip_install "requests"         "requests"
 _pip_install "psutil"           "psutil"
+_pip_install "smbus2"           "smbus2 (MPU6050 edge detection)"
 
 # opencv: prova prima la versione completa, poi headless come fallback
 log "  ⏳ pip install opencv-contrib-python..."

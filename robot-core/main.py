@@ -125,7 +125,7 @@ class RobotRuntime:
         self._safety.register_ram_fn(self._sensors.get_ram_free_mb)
 
         # ── Motor ─────────────────────────────────────────────────────────────
-        self._motor = MotorService(self._safety, self._bus)
+        self._motor = MotorService(self._safety, self._bus, sensor=self._sensors)
 
         # ── Memory ────────────────────────────────────────────────────────────
         mem_cfg = cfg.get("memory", {})

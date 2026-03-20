@@ -64,9 +64,10 @@ class MotorService:
     _PAN_SERVO  = 0
     _TILT_SERVO = 1
 
-    def __init__(self, safety: SafetyMonitor, bus: EventBus):
+    def __init__(self, safety: SafetyMonitor, bus: EventBus, sensor=None):
         self._safety   = safety
         self._bus      = bus
+        self._sensor   = sensor   # SensorService (for edge detection via IMU)
         self._lock     = threading.Lock()
         self._posture  = Posture.STAND
         self._pan_deg  = 0
@@ -142,11 +143,46 @@ class MotorService:
         time.sleep(0.3)
         self.stop()
 
+    # ── edge safety ───────────────────────────────────────────────────────────
+
+    def _check_edge(self, direction: str) -> bool:
+        """
+        Returns True if the IMU detects an edge in the given direction.
+        Publishes OBSTACLE_DETECTED and backs off slightly when an edge is found.
+        Only checks if SensorService with a working EdgeDetector is available.
+        """
+        if self._sensor is None:
+            return False
+        if not self._sensor.is_edge(direction):
+            return False
+
+        log.warning(f"MotorService: edge detected in direction '{direction}' — stopping")
+        self.stop()
+        # Brief reverse to move away from the edge
+        if direction == "forward":
+            self._cmd(lambda: self._crawler.do_action("backward", step=1, speed=35))
+        elif direction == "backward":
+            self._cmd(lambda: self._crawler.do_action("forward",  step=1, speed=35))
+        elif direction == "left":
+            self._cmd(lambda: self._crawler.do_action("turn right", step=1, speed=35))
+        elif direction == "right":
+            self._cmd(lambda: self._crawler.do_action("turn left",  step=1, speed=35))
+
+        self._bus.publish(
+            EventType.OBSTACLE_DETECTED,
+            {"type": "edge", "direction": direction},
+            source="MotorService",
+        )
+        self._moving = False
+        return True
+
     # ── motion commands ───────────────────────────────────────────────────────
 
     def forward(self, speed: int = 50) -> None:
         if self._safety.is_obstacle_blocked:
             log.debug("forward() suppressed — obstacle")
+            return
+        if self._check_edge("forward"):
             return
         speed = self._safety.clamp_speed(speed)
         log.debug(f"forward speed={speed}")
@@ -154,16 +190,22 @@ class MotorService:
         self._moving = True
 
     def backward(self, speed: int = 40) -> None:
+        if self._check_edge("backward"):
+            return
         speed = self._safety.clamp_speed(speed)
         log.debug(f"backward speed={speed}")
         self._cmd(lambda: self._crawler.do_action("backward", step=1, speed=speed))
         self._moving = True
 
     def turn_left(self, speed: int = 40) -> None:
+        if self._check_edge("left"):
+            return
         speed = self._safety.clamp_speed(speed)
         self._cmd(lambda: self._crawler.do_action("turn left", step=1, speed=speed))
 
     def turn_right(self, speed: int = 40) -> None:
+        if self._check_edge("right"):
+            return
         speed = self._safety.clamp_speed(speed)
         self._cmd(lambda: self._crawler.do_action("turn right", step=1, speed=speed))
 
