@@ -430,8 +430,8 @@ class VisionService:
 
         # Intervals
         self._face_interval   = cfg.get("camera.face_detect_interval_s", 0.25)
-        self._scene_interval  = cfg.get("vision_llm.scene_interval_s",   120)
-        self._object_interval = cfg.get("vision_llm.object_interval_s",  150)
+        self._scene_interval  = cfg.get("vision_llm.scene_interval_s",   30)
+        self._object_interval = cfg.get("vision_llm.object_interval_s",  45)
 
         # State
         self._active          = False
@@ -673,7 +673,12 @@ class VisionService:
                 if now - last_object >= self._object_interval:
                     self._analyze_objects()
                     last_object = time.time()
-            time.sleep(10)   # check every 10s
+            else:
+                # Nessun modello visivo: genera descrizione sintetica da face detection
+                if now - last_scene >= self._scene_interval:
+                    self._synthetic_scene()
+                    last_scene = time.time()
+            time.sleep(5)   # check every 5s
 
     def _analyze_scene(self) -> None:
         frame = self._get_frame()
@@ -685,13 +690,13 @@ class VisionService:
             log.warning(f"VisionService: scene skip — RAM {ram}MB < {min_ram}MB")
             return
 
-        if _OLLAMA_LOCK and not _OLLAMA_LOCK.acquire(blocking=False):
-            log.debug("VisionService: scene skip — ollama busy")
+        if _OLLAMA_LOCK and not _OLLAMA_LOCK.acquire(blocking=True, timeout=20):
+            log.debug("VisionService: scene skip — ollama busy >20s")
             return
         try:
             import ollama
-            img_b64 = self._frame_to_b64(frame)
-            keep_alive = self._cfg.get("vision_llm.keep_alive_s", 0)
+            img_b64    = self._frame_to_b64(frame)
+            keep_alive = self._cfg.get("vision_llm.keep_alive_s", 120)
             max_tok    = self._cfg.get("vision_llm.max_tokens", 90)
             resp = ollama.chat(
                 model=self._vision_model,
@@ -711,7 +716,9 @@ class VisionService:
             log.info(f"👁️  {desc}")
             with self._det_lock:
                 self._last_scene = desc
-            self._bus.publish(EventType.SCENE_ANALYZED, {"description": desc}, source="VisionService")
+            self._bus.publish(EventType.SCENE_ANALYZED,
+                              {"description": desc, "text": desc},
+                              source="VisionService")
         except Exception as e:
             log.warning(f"VisionService scene analysis: {e}")
         finally:
@@ -722,13 +729,13 @@ class VisionService:
         frame = self._get_frame()
         if frame is None:
             return
-        if _OLLAMA_LOCK and not _OLLAMA_LOCK.acquire(blocking=False):
-            log.debug("VisionService: object skip — ollama busy")
+        if _OLLAMA_LOCK and not _OLLAMA_LOCK.acquire(blocking=True, timeout=20):
+            log.debug("VisionService: object skip — ollama busy >20s")
             return
         try:
             import ollama
-            img_b64  = self._frame_to_b64(frame)
-            keep_alive = self._cfg.get("vision_llm.keep_alive_s", 0)
+            img_b64    = self._frame_to_b64(frame)
+            keep_alive = self._cfg.get("vision_llm.keep_alive_s", 120)
             resp = ollama.chat(
                 model=self._vision_model,
                 messages=[{
@@ -746,12 +753,33 @@ class VisionService:
             log.info(f"🔍 Oggetti: {objects}")
             with self._det_lock:
                 self._last_objects = objects
-            self._bus.publish(EventType.OBJECTS_DETECTED, {"objects": objects}, source="VisionService")
+            self._bus.publish(EventType.OBJECTS_DETECTED,
+                              {"objects": objects, "text": objects},
+                              source="VisionService")
         except Exception as e:
             log.warning(f"VisionService object analysis: {e}")
         finally:
             if _OLLAMA_LOCK:
                 _OLLAMA_LOCK.release()
+
+    def _synthetic_scene(self) -> None:
+        """Fallback quando nessun modello visivo è disponibile.
+        Costruisce una descrizione dalla face detection e dalla geometria."""
+        with self._det_lock:
+            faces = list(self._last_faces)
+        if faces:
+            labels = [f[4] for f in faces if f[4]]
+            if labels:
+                desc = f"Vedo {', '.join(labels)} davanti a me."
+            else:
+                desc = f"C'è una persona davanti a me, ma non la riconosco."
+        else:
+            desc = "Non vedo nessuno davanti a me in questo momento."
+        with self._det_lock:
+            self._last_scene = desc
+        self._bus.publish(EventType.SCENE_ANALYZED,
+                          {"description": desc, "text": desc},
+                          source="VisionService")
 
     # ── helpers ───────────────────────────────────────────────────────────────
 

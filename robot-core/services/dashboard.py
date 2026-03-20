@@ -1062,7 +1062,14 @@ es.onmessage=e=>{
       setExpr(_curMode==='night_watch'?'sleepy':'content');
     }
     if(d.type==='command') addBubble('user',d.text);
-    if(d.type==='scene')   document.getElementById('cam-overlay').textContent=d.text||'—';
+    if(d.type==='scene'||d.type==='scene_analyzed'){
+      const desc=d.text||d.description||'—';
+      document.getElementById('cam-overlay').textContent=desc;
+    }
+    if(d.type==='objects_detected'){
+      const obj=d.text||d.objects||'';
+      if(obj) document.getElementById('cam-overlay').textContent='🔍 '+obj;
+    }
     if(d.type==='person'){
       document.getElementById('person-avatar').textContent='😊';
       document.getElementById('person-name').textContent=d.name||'Sconosciuto';
@@ -1124,7 +1131,7 @@ es.onmessage=e=>{
     }
 
     // log
-    const skip=['ping','heartbeat','speech_transcribed','person_detected','scan_complete','llm_call'].includes(d.type);
+    const skip=['ping','heartbeat','speech_transcribed','person_detected','scan_complete','llm_call','scene_analyzed','objects_detected'].includes(d.type);
     if(!skip){
       const cls=d.type==='alert'?'alert':d.type.startsWith('tts')?'tts':
                d.type==='command'||d.type==='command_parsed'?'command':

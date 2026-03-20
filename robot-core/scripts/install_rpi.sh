@@ -273,6 +273,23 @@ else
     fi
 fi
 
+# Pull modello visione — moondream (necessario per analisi scena/oggetti)
+step "Vision model (moondream)"
+if ollama list 2>/dev/null | grep -q "moondream"; then
+    ok "moondream già presente"
+else
+    log "  📥 Download moondream (~1.6 GB) — modello visione per riconoscimento oggetti..."
+    set +e
+    ollama pull moondream 2>&1 | tee -a "$LOG"
+    PULL_EXIT=$?
+    set -e
+    if ollama list 2>/dev/null | grep -q "moondream"; then
+        ok "moondream scaricato con successo"
+    else
+        warn "❌ Download moondream fallito (exit=$PULL_EXIT) — dopo il reboot esegui: ollama pull moondream"
+    fi
+fi
+
 # ── 9. Crea cartelle dati ─────────────────────────────────────────────────────
 step "Struttura dati"
 mkdir -p \
