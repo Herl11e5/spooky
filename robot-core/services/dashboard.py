@@ -109,6 +109,7 @@ class DashboardService:
         bus.subscribe(EventType.WAKE_WORD_DETECTED,self._on_wake)
         bus.subscribe(EventType.SPEECH_TRANSCRIBED,self._on_transcript)
         bus.subscribe(EventType.COMMAND_PARSED,    self._on_command_parsed)
+        bus.subscribe(EventType.LLM_CALL,          self._on_llm_call)
         bus.subscribe("*",                         self._on_any)
 
     def start(self):
@@ -435,6 +436,18 @@ class DashboardService:
         shared.add_chat("user", cmd)
         self._broadcast({"type": "command", "text": cmd})
 
+    def _on_llm_call(self, ev):
+        self._broadcast({
+            "type":    "llm_call",
+            "trigger": ev.get("trigger", ""),
+            "prompt":  ev.get("prompt", ""),
+            "context": ev.get("context", ""),
+            "reply":   ev.get("reply", ""),
+            "time_ms": ev.get("time_ms", 0),
+            "fallback":ev.get("fallback", False),
+            "model":   ev.get("model", "?"),
+        })
+
     def _on_any(self, ev):
         self._broadcast({"type": ev.type, **ev.payload})
 
@@ -602,6 +615,20 @@ body{background:var(--bg);color:var(--text);font-family:'Nunito',sans-serif;font
 .le.person{color:var(--blue)}
 .le.command{color:var(--yellow)}
 .le.tts{color:var(--green)}
+
+/* ── LLM STREAM ── */
+#llm-stream{height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:.35rem}
+.llm-e{border-left:3px solid var(--green);padding:.3rem .5rem;background:#111;border-radius:0 4px 4px 0}
+.llm-e.fb{border-left-color:#333}
+.llm-e .llm-hd{font-size:.58rem;color:var(--muted);display:flex;gap:.4rem;margin-bottom:.2rem}
+.llm-e .llm-hd .llm-tag{background:#222;border-radius:3px;padding:1px 4px;text-transform:uppercase;letter-spacing:.05em}
+.llm-e .llm-hd .llm-tag.real{color:var(--green)}
+.llm-e .llm-hd .llm-tag.fall{color:#444}
+.llm-e .llm-prompt{color:var(--blue);font-size:.68rem;margin-bottom:.2rem}
+.llm-e .llm-ctx{color:#555;font-size:.6rem;font-style:italic;margin-bottom:.15rem}
+.llm-e .llm-reply{color:var(--green);font-size:.72rem;font-weight:600}
+.llm-e.fb .llm-reply{color:#555}
+.llm-e .llm-meta{font-size:.57rem;color:#333;margin-top:.15rem}
 
 /* ── FACTS TABLE ── */
 #facts-tbl{width:100%;border-collapse:collapse;font-size:.72rem}
@@ -833,6 +860,12 @@ body{background:var(--bg);color:var(--text);font-family:'Nunito',sans-serif;font
     <div id="log"></div>
   </div>
 
+  <!-- Flusso LLM -->
+  <div class="card">
+    <h2>🧠 Flusso LLM <span id="llm-model-lbl" style="font-size:.62rem;color:var(--muted);font-family:'Nunito'"></span></h2>
+    <div id="llm-stream"></div>
+  </div>
+
 </div>
 </div>
 
@@ -1062,9 +1095,36 @@ es.onmessage=e=>{
       const btn=document.getElementById('btn-scan');
       if(btn) btn.disabled=false;
     }
+    if(d.type==='llm_call'){
+      const stream=document.getElementById('llm-stream');
+      if(stream){
+        const fb=!!d.fallback;
+        const ts=new Date().toLocaleTimeString('it');
+        const el=document.createElement('div');
+        el.className='llm-e'+(fb?' fb':'');
+        const tagCls=fb?'fall':'real';
+        const tagTxt=fb?'FALLBACK':'LLM';
+        el.innerHTML=
+          '<div class="llm-hd">'
+          +'<span>'+ts+'</span>'
+          +(d.trigger?'<span class="llm-tag">'+d.trigger+'</span>':'')
+          +'<span class="llm-tag '+tagCls+'">'+tagTxt+'</span>'
+          +(d.time_ms?'<span>'+d.time_ms+'ms</span>':'')
+          +'</div>'
+          +(d.prompt?'<div class="llm-prompt">▶ '+d.prompt+'</div>':'')
+          +(d.context?'<div class="llm-ctx">ctx: '+d.context+'</div>':'')
+          +'<div class="llm-reply">◀ '+(d.reply||'—')+'</div>'
+          +'<div class="llm-meta">'+d.model+'</div>';
+        stream.insertBefore(el,stream.firstChild);
+        while(stream.children.length>25) stream.lastChild.remove();
+        // aggiorna label modello
+        const lbl=document.getElementById('llm-model-lbl');
+        if(lbl && d.model) lbl.textContent='['+d.model+']';
+      }
+    }
 
     // log
-    const skip=['ping','heartbeat','speech_transcribed','person_detected','scan_complete'].includes(d.type);
+    const skip=['ping','heartbeat','speech_transcribed','person_detected','scan_complete','llm_call'].includes(d.type);
     if(!skip){
       const cls=d.type==='alert'?'alert':d.type.startsWith('tts')?'tts':
                d.type==='command'||d.type==='command_parsed'?'command':

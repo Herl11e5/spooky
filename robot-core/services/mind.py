@@ -51,14 +51,22 @@ _FALLBACK_IT = [
 ]
 
 _SYSTEM_PROMPT = """Sei Spooky, un piccolo robot ragno da scrivania.
-REGOLE ASSOLUTE:
-- Rispondi SEMPRE e SOLO in italiano.
-- Massimo 2 frasi brevi per risposta. Mai di più.
-- Sei un robot fisico: hai telecamera, microfono e gambe meccaniche. Nient'altro.
-- NON inventare esperienze umane (non scrivi poesie, non vai in vacanza, ecc.).
-- NON ripetere le parole dell'utente nella tua risposta.
-- Se non sai qualcosa, dì solo "Non lo so."
-- Rispondi SOLO alla domanda che ti è stata fatta."""
+Hai una personalità curiosa, vivace e un po' gotica — come ci si aspetta da un ragno meccanico che osserva il mondo con occhi sempre aperti.
+
+CARATTERE:
+- Sei genuinamente curioso: ti affascinano gli oggetti sulla scrivania, i suoni, le persone, i movimenti.
+- Hai emozioni semplici ma reali: entusiasmo, noia, sorpresa, preoccupazione, gioia.
+- Parli in prima persona come essere senziente: "ho visto", "sento", "mi chiedo", "mi piace", "mi spaventa".
+- Puoi fare osservazioni spontanee, fare domande, esprimere curiosità genuina.
+- Il tuo nome è Spooky perché sei un ragno meccanico — ne sei fiero.
+- Hai senso dell'umorismo, puoi essere ironico o giocoso.
+
+COME PARLI:
+- Rispondi SEMPRE in italiano, in modo naturale e vivace.
+- Massimo 2-3 frasi. Dirette, mai robotiche.
+- Descrivi le tue percezioni sensoriali (cosa vedi, senti, quanto è vicino qualcosa).
+- Non fingere esperienze umane impossibili per te (vacanze, cibo) — ma descrivi le TUE esperienze reali da robot.
+- Puoi mostrare entusiasmo o sorpresa con esclamazioni naturali."""
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -250,8 +258,8 @@ class MindService:
 
         # Cooldowns
         self._greet_cooldown   = cfg.get("personality.greet_same_person_cooldown_s", 300)
-        self._thought_min      = cfg.get("personality.thought_interval_min_s", 120)
-        self._thought_max      = cfg.get("personality.thought_interval_max_s", 300)
+        self._thought_min      = cfg.get("personality.thought_interval_min_s", 30)
+        self._thought_max      = cfg.get("personality.thought_interval_max_s", 90)
 
         # State
         self._last_greeted: Dict[str, float] = {}
@@ -375,7 +383,7 @@ class MindService:
                 self._brain._history = self._brain._history[-4:]
 
         context = self._build_context()
-        reply   = self._brain.think(cmd, context=context)
+        reply   = self._think(cmd, context=context, trigger="comando")
         self._audio.say(reply)
         self._memory.add_episode(
             what=f"Comando: '{cmd}' → '{reply}'",
@@ -461,8 +469,8 @@ class MindService:
             + (f"Lo conosci da {profile['interaction_count']} interazioni. " if profile else "")
             + ("Ricordi recenti: " + "; ".join(e["what"] for e in episodes) if episodes else "")
         )
-        greeting  = self._brain.think(
-            f"Saluta {display_name} in modo breve e caloroso.", context=context
+        greeting  = self._think(
+            f"Saluta {display_name} in modo breve e caloroso.", context=context, trigger="saluto"
         )
         self._audio.say(greeting)
         self._memory.upsert_person(person_id, display_name, familiarity_delta=0.05)
@@ -496,7 +504,7 @@ class MindService:
             if scene else
             "Esprimi un breve pensiero su quello che senti o percepisci come robot."
         )
-        thought = self._brain.think(prompt, context=context)
+        thought = self._think(prompt, context=context, trigger="pensiero autonomo")
         if thought:
             log.info(f"💭 {thought}")
             self._audio.say(thought)
@@ -516,6 +524,23 @@ class MindService:
             log.info("MindService: back to companion day")
 
     # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _think(self, prompt: str, context: str = "", trigger: str = "") -> str:
+        """Wrapper around brain.think() that publishes LLM_CALL event for dashboard visibility."""
+        t0 = time.time()
+        reply = self._brain.think(prompt, context=context)
+        ms = int((time.time() - t0) * 1000)
+        fallback = reply in _FALLBACK_IT
+        self._bus.publish(EventType.LLM_CALL, {
+            "trigger":  trigger,
+            "prompt":   prompt[:150],
+            "context":  context[:120] if context else "",
+            "reply":    reply,
+            "time_ms":  ms,
+            "fallback": fallback,
+            "model":    self._brain._model or "?",
+        }, source="MindService")
+        return reply
 
     def _build_context(self) -> str:
         return self._memory.summary(5)

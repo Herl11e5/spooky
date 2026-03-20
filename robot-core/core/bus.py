@@ -82,6 +82,9 @@ class EventType:
     # Environment scan
     SCAN_COMPLETE           = "scan_complete"        # {"readings": [{"angle":0,"dist":99.0}, ...]}
 
+    # LLM thought stream
+    LLM_CALL                = "llm_call"             # {"trigger","prompt","reply","time_ms","fallback","model"}
+
     # System
     HEARTBEAT               = "heartbeat"
     SHUTDOWN_REQUEST        = "shutdown_request"
