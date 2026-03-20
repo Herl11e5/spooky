@@ -183,6 +183,21 @@ class DashboardService:
                 diag["llm_ok"] = getattr(brain, "_ok", False)
             return jsonify(diag)
 
+        @app.route("/api/sensors")
+        def api_sensors():
+            if self._sensor:
+                return jsonify({
+                    "dist": round(self._sensor.get_distance_cm(), 1),
+                    "temp": round(self._sensor.get_cpu_temp_c(), 1),
+                    "ram":  self._sensor.get_ram_free_mb(),
+                })
+            s = shared.snapshot()
+            return jsonify({
+                "dist": s.get("distance_cm", 999),
+                "temp": s.get("cpu_temp_c", 0),
+                "ram":  s.get("ram_free_mb", 8192),
+            })
+
         @app.route("/api/scan", methods=["POST"])
         def api_scan():
             if not self._motor or not self._sensor:
@@ -927,7 +942,7 @@ function setSensor(id,valId,val,warnFn,dangerFn){
   s.className='sensor'+(dangerFn&&dangerFn()?' danger':warnFn&&warnFn()?' warn':'');
 }
 
-/* ── SENSOR STATE (aggiornato solo da SSE heartbeat, mai da fetchState) ── */
+/* ── SENSOR STATE ── */
 let _sens={dist:999,temp:0,ram:0,lastTs:0};
 setInterval(()=>{
   const el=document.getElementById('hb-age');
@@ -939,15 +954,26 @@ setInterval(()=>{
 },1000);
 function applySensors(dist,temp,ram){
   _sens={dist,temp,ram,lastTs:Date.now()};
-  setSensor('s-dist','v-dist',dist>=990?'—':dist.toFixed(0),
+  setSensor('s-dist','v-dist',dist>=990?'—':dist.toFixed(0)+' cm',
     ()=>dist<40, ()=>dist<20);
-  setSensor('s-temp','v-temp',temp.toFixed(1),
+  setSensor('s-temp','v-temp',temp.toFixed(1)+'°C',
     ()=>temp>65, ()=>temp>75);
-  setSensor('s-ram','v-ram',ram,
+  setSensor('s-ram','v-ram',ram+' MB',
     ()=>ram<600, ()=>ram<300);
   document.getElementById('dot-obs').className=
     'dot '+(dist<20?'red':dist<40?'warn':'on');
 }
+/* Polling diretto /api/sensors ogni 2s — fonte primaria affidabile */
+async function fetchSensors(){
+  try{
+    const r=await fetch('/api/sensors'); const d=await r.json();
+    const dist=(d.dist!=null)?d.dist:999;
+    const temp=(d.temp!=null)?d.temp:0;
+    const ram=(d.ram!=null)?d.ram:0;
+    applySensors(dist,temp,ram);
+  }catch(e){}
+}
+fetchSensors(); setInterval(fetchSensors,2000);
 
 /* ── STATE POLL ── */
 async function fetchState(){
@@ -958,14 +984,6 @@ async function fetchState(){
     renderDrives(dr);
     const mood=(dr.mood||'content').toLowerCase();
     document.getElementById('mood-text').textContent='😊 '+mood;
-    // sensori: usa fetchState solo all'avvio (nessun SSE ancora ricevuto)
-    if(Date.now()-_sens.lastTs > 8000){
-      const dist=d.distance_cm||999;
-      const temp=d.cpu_temp_c||0;
-      const ram=d.ram_free_mb||0;
-      // non sovrascrivere con i valori default di init (temp=0, ram=8192)
-      if(temp>0 || ram>0 && ram<8190) applySensors(dist,temp,ram);
-    }
     // dots
     document.getElementById('dot-cam').className='dot on';
     document.getElementById('dot-motor').className='dot on';
@@ -1028,7 +1046,10 @@ es.onmessage=e=>{
       document.getElementById('person-name').style.color='var(--muted)';
     }
     if(d.type==='heartbeat'){
-      applySensors(d.dist||999, d.temp||0, d.ram||0);
+      const dist=(d.dist!=null)?d.dist:999;
+      const temp=(d.temp!=null)?d.temp:0;
+      const ram=(d.ram!=null)?d.ram:0;
+      applySensors(dist,temp,ram);
     }
     if(d.type==='obstacle'){
       document.getElementById('dot-obs').className='dot '+(d.blocked?'red':'on');
