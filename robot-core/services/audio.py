@@ -71,7 +71,10 @@ class AudioOutput:
 
     @staticmethod
     def _detect_aplay_device() -> Optional[str]:
-        """Return the first non-HDMI/non-vc4 ALSA output device (e.g. HifiBerry DAC)."""
+        """
+        Return the best non-HDMI ALSA output device using stable CARD= name
+        (not card number, which changes across reboots).
+        """
         try:
             out = subprocess.check_output(
                 ["aplay", "-l"], stderr=subprocess.DEVNULL, timeout=3
@@ -82,14 +85,30 @@ class AudioOutput:
                 low = line.lower()
                 if "hdmi" in low or "vc4" in low:
                     continue
-                # e.g. "card 2: sndrpihifiberry ..."
-                card_num = line.split(":")[0].split()[-1]
-                dev = f"plughw:{card_num},0"
-                log.info(f"AudioOutput: detected non-HDMI output → {dev} ({line.strip()})")
+                # e.g. "card 2: sndrpihifiberry [snd_rpi_hifiberry_dac], device 0: ..."
+                # Use CARD=name syntax so it works regardless of card number
+                parts = line.split(":")
+                if len(parts) < 2:
+                    continue
+                card_name = parts[1].strip().split()[0]   # e.g. "sndrpihifiberry"
+                dev = f"plughw:CARD={card_name},DEV=0"
+                log.info(f"AudioOutput: detected non-HDMI output → {dev}")
                 return dev
         except Exception as e:
             log.debug(f"AudioOutput: aplay device detection failed — {e}")
         return None
+
+    @staticmethod
+    def _test_aplay_device(dev_args: list, wav_path: str) -> bool:
+        """Try aplay and return True only if it actually produces audio (non-HDMI check)."""
+        try:
+            result = subprocess.run(
+                ["aplay", "-q"] + dev_args + [wav_path],
+                capture_output=True, timeout=30,
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
 
     def say(self, text: str, wait: bool = True) -> None:
         """
@@ -140,35 +159,45 @@ class AudioOutput:
         except Exception as e:
             log.error(f"TTS espeak-ng: {e}"); return
 
-        # Build device list: detected non-HDMI card first, then fallbacks
-        dev_list = []
+        # Build device list: detected non-HDMI card first, then named fallbacks
+        # SKIP generic default/plug:default — HDMI "succeeds" silently on RPi
+        dev_list: list = []
         if self._aplay_dev:
             dev_list.append(["-D", self._aplay_dev])
-        dev_list += [[], ["-D", "plug:default"], ["-D", "plughw:2,0"],
-                     ["-D", "plughw:1,0"], ["-D", "plughw:0,0"]]
+        # Named non-HDMI fallbacks (stable card names)
+        dev_list += [
+            ["-D", "plughw:CARD=sndrpihifiberry,DEV=0"],
+            ["-D", "plughw:CARD=b1,DEV=0"],      # robot-hat I2S amp
+            ["-D", "plughw:CARD=Headphones,DEV=0"],
+        ]
 
         played = False
         for dev_args in dev_list:
-            try:
-                subprocess.run(
-                    ["aplay", "-q"] + dev_args + [wav_path],
-                    check=True, capture_output=True, timeout=30,
-                )
-                log.debug(f"TTS: aplay ok with {dev_args or 'default'}")
-                played = True; break
-            except subprocess.CalledProcessError as ae:
-                log.debug(f"TTS aplay {dev_args or 'default'}: {ae.stderr.decode(errors='replace')[:60]}")
+            r = subprocess.run(
+                ["aplay", "-q"] + dev_args + [wav_path],
+                capture_output=True, timeout=30,
+            )
+            if r.returncode == 0:
+                log.info(f"TTS: played via {dev_args[1] if dev_args else 'default'}")
+                played = True
+                break
+            log.debug(f"TTS aplay {dev_args}: {r.stderr.decode(errors='replace')[:80]}")
+
         if not played:
-            # Last resort: espeak-ng direct output (no aplay)
-            log.warning("TTS: aplay failed on all devices — trying espeak-ng direct")
+            # Ultimo tentativo: espeak-ng con AUDIODEV puntato al device rilevato
+            log.warning("TTS: aplay failed — trying espeak-ng direct")
+            env = os.environ.copy()
+            if self._aplay_dev:
+                # Estrai card name per ALSA_OUTPUT
+                env["AUDIODEV"] = self._aplay_dev.replace("plughw:", "hw:")
             try:
                 subprocess.run(
                     ["espeak-ng", "-v", self._lang, "-s", "145", text],
-                    check=True, capture_output=True, timeout=15,
+                    timeout=15, env=env,
                 )
                 played = True
             except Exception as e2:
-                log.error(f"TTS: espeak-ng direct also failed — {e2}")
+                log.error(f"TTS: all methods failed — {e2}")
 
     def _espeak_paplay(self, text: str, wav_path: str) -> None:
         try:

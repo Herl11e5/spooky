@@ -359,18 +359,29 @@ class FaceDetector:
     Returns list of (x, y, w, h) bounding boxes (in RGB frame coordinates).
     """
 
-    def __init__(self, scale_factor: float = 1.3, min_neighbours: int = 5):
+    def __init__(self, scale_factor: float = 1.1, min_neighbours: int = 3):
         data_dir = cv2.data.haarcascades
         path     = os.path.join(data_dir, "haarcascade_frontalface_default.xml")
+        if not os.path.exists(path):
+            log.error(f"FaceDetector: cascade not found at {path}")
         self._clf = cv2.CascadeClassifier(path)
         self._sf  = scale_factor
         self._mn  = min_neighbours
 
-    def detect(self, frame_rgb: np.ndarray) -> List[Tuple[int,int,int,int]]:
+    def detect(self, frame_rgb: np.ndarray,
+               min_size: int = 40) -> List[Tuple[int,int,int,int]]:
         gray  = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
-        faces = self._clf.detectMultiScale(gray, self._sf, self._mn, minSize=(60, 60))
+        # equalizeHist migliora la rilevazione in condizioni di luce scarsa
+        gray  = cv2.equalizeHist(gray)
+        faces = self._clf.detectMultiScale(
+            gray, self._sf, self._mn,
+            minSize=(min_size, min_size),
+            flags=cv2.CASCADE_SCALE_IMAGE,
+        )
         if len(faces) == 0:
             return []
+        # Ordina per area decrescente (viso più grande prima)
+        faces = sorted(faces, key=lambda f: f[2]*f[3], reverse=True)
         return [(int(x), int(y), int(w), int(h)) for x, y, w, h in faces]
 
 
