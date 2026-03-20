@@ -829,6 +829,20 @@ function setSensor(id,valId,val,warnFn,dangerFn){
   s.className='sensor'+(dangerFn&&dangerFn()?' danger':warnFn&&warnFn()?' warn':'');
 }
 
+/* ── SENSOR STATE (aggiornato solo da SSE heartbeat, mai da fetchState) ── */
+let _sens={dist:999,temp:0,ram:0,lastTs:0};
+function applySensors(dist,temp,ram){
+  _sens={dist,temp,ram,lastTs:Date.now()};
+  setSensor('s-dist','v-dist',dist>=990?'—':dist.toFixed(0),
+    ()=>dist<40, ()=>dist<20);
+  setSensor('s-temp','v-temp',temp.toFixed(1),
+    ()=>temp>65, ()=>temp>75);
+  setSensor('s-ram','v-ram',ram,
+    ()=>ram<600, ()=>ram<300);
+  document.getElementById('dot-obs').className=
+    'dot '+(dist<20?'red':dist<40?'warn':'on');
+}
+
 /* ── STATE POLL ── */
 async function fetchState(){
   try{
@@ -838,19 +852,18 @@ async function fetchState(){
     renderDrives(dr);
     const mood=(dr.mood||'content').toLowerCase();
     document.getElementById('mood-text').textContent='😊 '+mood;
-    // sensors
-    const dist=d.distance_cm||999;
-    setSensor('s-dist','v-dist',dist>=990?'—':dist.toFixed(0),
-      ()=>dist<40, ()=>dist<20);
-    setSensor('s-temp','v-temp',(d.cpu_temp_c||0).toFixed(1),
-      ()=>d.cpu_temp_c>65, ()=>d.cpu_temp_c>75);
-    setSensor('s-ram','v-ram',d.ram_free_mb||0,
-      ()=>d.ram_free_mb<600, ()=>d.ram_free_mb<300);
+    // sensori: usa fetchState solo all'avvio (nessun SSE ancora ricevuto)
+    if(Date.now()-_sens.lastTs > 8000){
+      const dist=d.distance_cm||999;
+      const temp=d.cpu_temp_c||0;
+      const ram=d.ram_free_mb||0;
+      // non sovrascrivere con i valori default di init (temp=0, ram=8192)
+      if(temp>0 || ram>0 && ram<8190) applySensors(dist,temp,ram);
+    }
     // dots
-    document.getElementById('dot-cam').className='dot '+(d.distance_cm<999||true?'on':'off');
-    document.getElementById('dot-obs').className='dot '+(d.obstacle_blocked?'red':'on');
+    document.getElementById('dot-cam').className='dot on';
     document.getElementById('dot-motor').className='dot on';
-    // mic (only if no SSE override)
+    // mic
     applyMic(d.mic_state||'idle', d.last_transcript||'');
     // speaking
     const sw=document.getElementById('speaking-wave');
@@ -909,11 +922,7 @@ es.onmessage=e=>{
       document.getElementById('person-name').style.color='var(--muted)';
     }
     if(d.type==='heartbeat'){
-      const dist=d.dist||999;
-      document.getElementById('v-dist').textContent=dist>=990?'—':dist.toFixed(0);
-      document.getElementById('v-temp').textContent=(d.temp||0).toFixed(1);
-      document.getElementById('v-ram').textContent=d.ram||0;
-      document.getElementById('dot-obs').className='dot '+(dist<20?'red':dist<40?'warn':'on');
+      applySensors(d.dist||999, d.temp||0, d.ram||0);
     }
     if(d.type==='obstacle'){
       document.getElementById('dot-obs').className='dot '+(d.blocked?'red':'on');
