@@ -641,6 +641,9 @@ body{background:var(--bg);color:var(--text);font-family:'Nunito',sans-serif;font
         <div class="sl">RAM MB</div>
       </div>
     </div>
+    <div style="font-size:.58rem;color:var(--muted);text-align:right;margin-top:.2rem">
+      heartbeat <span id="hb-age">—</span>
+    </div>
   </div>
 
   <!-- Persona -->
@@ -876,6 +879,14 @@ function setSensor(id,valId,val,warnFn,dangerFn){
 
 /* ── SENSOR STATE (aggiornato solo da SSE heartbeat, mai da fetchState) ── */
 let _sens={dist:999,temp:0,ram:0,lastTs:0};
+setInterval(()=>{
+  const el=document.getElementById('hb-age');
+  if(!el) return;
+  if(_sens.lastTs===0){el.textContent='nessuno';return;}
+  const s=Math.round((Date.now()-_sens.lastTs)/1000);
+  el.textContent=s+'s fa';
+  el.style.color=s>10?'var(--red)':s>5?'var(--yellow)':'var(--green)';
+},1000);
 function applySensors(dist,temp,ram){
   _sens={dist,temp,ram,lastTs:Date.now()};
   setSensor('s-dist','v-dist',dist>=990?'—':dist.toFixed(0),

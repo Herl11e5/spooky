@@ -143,32 +143,40 @@ class SensorService:
         return 999.0   # simulation / no reading
 
     def _read_cpu_temp(self) -> float:
-        # RPi thermal zone
-        for path in (
-            "/sys/class/thermal/thermal_zone0/temp",
-            "/sys/devices/virtual/thermal/thermal_zone0/temp",
-        ):
+        # 1. Scorri tutte le thermal zone (RPi 5 / Debian trixie può averne molte)
+        import glob
+        for path in sorted(glob.glob("/sys/class/thermal/thermal_zone*/temp")):
             try:
-                return int(Path(path).read_text()) / 1000.0
+                val = int(Path(path).read_text().strip())
+                if val > 0:
+                    return val / 1000.0
             except Exception:
                 continue
-        # macOS fallback via powermetrics (won't be 100% accurate, just for dev)
+        # 2. psutil (installato come dipendenza Spooky)
         try:
-            import subprocess
-            out = subprocess.check_output(
-                ["sysctl", "-n", "machdep.xcpm.cpu_thermal_level"], timeout=1
-            )
-            return float(out.strip()) * 0.5 + 30  # rough approximation
+            import psutil
+            temps = psutil.sensors_temperatures()
+            for key in ("cpu_thermal", "cpu-thermal", "soc_thermal", "coretemp"):
+                if key in temps and temps[key]:
+                    return temps[key][0].current
         except Exception:
-            return 0.0
+            pass
+        return 0.0
 
     def _read_ram_free_mb(self) -> int:
+        # 1. /proc/meminfo (Linux)
         try:
             with open("/proc/meminfo") as f:
                 for line in f:
                     if line.startswith("MemAvailable:"):
                         return int(line.split()[1]) // 1024
-        except FileNotFoundError:
+        except Exception:
+            pass
+        # 2. psutil fallback
+        try:
+            import psutil
+            return psutil.virtual_memory().available // (1024 * 1024)
+        except Exception:
             pass
         # macOS / fallback via vm_stat
         try:
