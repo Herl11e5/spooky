@@ -194,6 +194,7 @@ pip install \
     vosk \
     sounddevice \
     requests \
+    psutil \
     2>&1 | tee -a "$LOG" || warn "Alcuni pacchetti pip hanno fallito"
 
 # ── 7. Vosk model italiano ────────────────────────────────────────────────────
@@ -232,13 +233,16 @@ fi
 # Avvia ollama serve in background se non attivo
 if ! pgrep -x ollama &>/dev/null; then
     log "  ⏳ Avvio ollama serve..."
-    ollama serve >> "$LOG" 2>&1 &
-    for i in $(seq 1 20); do
+    nohup ollama serve >> "$LOG" 2>&1 &
+    log "  ⏳ Attendo che ollama sia pronto (max 40s)..."
+    READY=0
+    for i in $(seq 1 40); do
         if curl -sf http://127.0.0.1:11434/api/tags &>/dev/null; then
-            ok "ollama pronto (${i}s)"; break
+            ok "ollama pronto (${i}s)"; READY=1; break
         fi
         sleep 1
     done
+    [ "$READY" -eq 0 ] && warn "ollama non risponde dopo 40s — pull potrebbe fallire"
 else
     ok "ollama già in esecuzione"
 fi
@@ -248,15 +252,24 @@ step "LLM model (llama3.2:3b)"
 if ollama list 2>/dev/null | grep -q "llama3.2:3b"; then
     ok "llama3.2:3b già presente"
 else
-    log "  📥 Download llama3.2:3b (~2 GB, migliore qualità)..."
-    ollama pull llama3.2:3b 2>&1 | tee -a "$LOG" \
-        && ok "llama3.2:3b scaricato" \
-        || warn "Download llama3.2:3b fallito — provo 1b come fallback..."
-    # Fallback a 1b se 3b fallisce
-    if ! ollama list 2>/dev/null | grep -q "llama3.2:3b"; then
-        ollama pull llama3.2:1b 2>&1 | tee -a "$LOG" \
-            && ok "llama3.2:1b scaricato (fallback)" \
-            || warn "Download LLM fallito — scaricalo dopo con: ollama pull llama3.2:3b"
+    log "  📥 Download llama3.2:3b (~2 GB) — può richiedere diversi minuti..."
+    # Disabilita pipefail solo per questo blocco (il pull è lento e interrompibile)
+    set +e
+    ollama pull llama3.2:3b 2>&1 | tee -a "$LOG"
+    PULL_EXIT=${PIPESTATUS[0]}
+    set -e
+    if ollama list 2>/dev/null | grep -q "llama3.2"; then
+        ok "Modello LLM scaricato"
+    else
+        warn "Download llama3.2:3b fallito (exit=$PULL_EXIT) — provo 1b come fallback..."
+        set +e
+        ollama pull llama3.2:1b 2>&1 | tee -a "$LOG"
+        set -e
+        if ollama list 2>/dev/null | grep -q "llama3.2"; then
+            ok "llama3.2:1b scaricato (fallback)"
+        else
+            warn "❌ Download LLM fallito — dopo il reboot esegui: ollama pull llama3.2:3b"
+        fi
     fi
 fi
 
@@ -284,13 +297,30 @@ fi
 step "Test audio"
 if command -v espeak-ng &>/dev/null && command -v aplay &>/dev/null; then
     TMP_WAV="/tmp/spooky_install_test.wav"
-    if espeak-ng -v it -w "$TMP_WAV" "installazione completata" 2>/dev/null && \
-       aplay -q "$TMP_WAV" 2>/dev/null; then
-        ok "Audio funzionante"
-    else
-        warn "Test audio fallito — verifica altoparlante e /etc/asound.conf"
-        aplay -l 2>&1 | grep "card" | tee -a "$LOG" || true
-    fi
+    espeak-ng -v it -w "$TMP_WAV" "installazione completata" 2>/dev/null || true
+
+    # Trova il primo device non-HDMI (HifiBerry DAC, USB, ecc.)
+    AUDIO_DEV=""
+    while IFS= read -r line; do
+        low="${line,,}"
+        if [[ "$line" == card* ]] && [[ "$low" != *hdmi* ]] && [[ "$low" != *vc4* ]]; then
+            card_num=$(echo "$line" | grep -oP '(?<=card )\d+')
+            AUDIO_DEV="plughw:${card_num},0"
+            break
+        fi
+    done < <(aplay -l 2>/dev/null)
+
+    PLAYED=0
+    for dev in "${AUDIO_DEV:+-D $AUDIO_DEV}" "" "-D plug:default"; do
+        # shellcheck disable=SC2086
+        if aplay -q $dev "$TMP_WAV" 2>/dev/null; then
+            ok "Audio OK (device: ${dev:-default})"
+            PLAYED=1; break
+        fi
+    done
+    [ "$PLAYED" -eq 0 ] && warn "Test audio fallito — verifica cablaggio altoparlante"
+    log "  Dispositivi audio disponibili:"
+    aplay -l 2>&1 | grep "^card" | while read -r l; do log "    $l"; done || true
     rm -f "$TMP_WAV"
 else
     warn "espeak-ng o aplay non disponibili"
