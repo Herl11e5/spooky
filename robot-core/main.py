@@ -219,7 +219,7 @@ class RobotRuntime:
             motor        = self._motor,
             audio        = self._audio,
             mind         = self._mind,
-            sensor       = self._sensor,
+            sensor       = self._sensors,
         )
 
         # ── Subscribe to lifecycle events ─────────────────────────────────────
