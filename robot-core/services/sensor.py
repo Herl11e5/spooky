@@ -143,7 +143,16 @@ class SensorService:
         return 999.0   # simulation / no reading
 
     def _read_cpu_temp(self) -> float:
-        # 1. Scorri tutte le thermal zone (RPi 5 / Debian trixie può averne molte)
+        # 1. vcgencmd (RPi nativo — più affidabile)
+        try:
+            import subprocess
+            out = subprocess.check_output(
+                ["vcgencmd", "measure_temp"], timeout=2
+            ).decode().strip()          # "temp=48.5'C"
+            return float(out.split("=")[1].rstrip("'C"))
+        except Exception:
+            pass
+        # 2. Thermal zone sysfs (Linux generico)
         import glob
         for path in sorted(glob.glob("/sys/class/thermal/thermal_zone*/temp")):
             try:
@@ -152,7 +161,7 @@ class SensorService:
                     return val / 1000.0
             except Exception:
                 continue
-        # 2. psutil (installato come dipendenza Spooky)
+        # 3. psutil
         try:
             import psutil
             temps = psutil.sensors_temperatures()
@@ -164,34 +173,41 @@ class SensorService:
         return 0.0
 
     def _read_ram_free_mb(self) -> int:
-        # 1. /proc/meminfo (Linux)
+        # 1. /proc/meminfo (Linux — più affidabile)
         try:
             with open("/proc/meminfo") as f:
                 for line in f:
                     if line.startswith("MemAvailable:"):
-                        return int(line.split()[1]) // 1024
+                        val = int(line.split()[1]) // 1024
+                        if val > 0:
+                            return val
         except Exception:
             pass
-        # 2. psutil fallback
+        # 2. free -m (shell)
+        try:
+            import subprocess
+            out = subprocess.check_output(["free", "-m"], timeout=2).decode()
+            for line in out.splitlines():
+                if line.startswith("Mem:"):
+                    parts = line.split()
+                    # free -m: Mem: total used free shared buff/cache available
+                    if len(parts) >= 7:
+                        return int(parts[6])   # "available" column
+            # fallback: total - used
+            for line in out.splitlines():
+                if line.startswith("Mem:"):
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        return max(0, int(parts[1]) - int(parts[2]))
+        except Exception:
+            pass
+        # 3. psutil
         try:
             import psutil
             return psutil.virtual_memory().available // (1024 * 1024)
         except Exception:
             pass
-        # macOS / fallback via vm_stat
-        try:
-            import subprocess
-            out = subprocess.check_output(["vm_stat"], timeout=2).decode()
-            pages_free = 0
-            page_size  = 4096
-            for line in out.splitlines():
-                if "Pages free" in line:
-                    pages_free = int(line.split(":")[1].strip().rstrip("."))
-                elif "page size of" in line:
-                    page_size = int(line.split("page size of")[1].split()[0])
-            return (pages_free * page_size) // (1024 * 1024)
-        except Exception:
-            return 4096   # assume plentiful if we can't read
+        return 1024   # assume disponibile se non riusciamo a leggere
 
     def __repr__(self) -> str:
         return (
