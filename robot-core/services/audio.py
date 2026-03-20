@@ -61,12 +61,35 @@ class AudioOutput:
     M_SILENT        = "silent"
 
     def __init__(self, bus: EventBus, language: str = "it", method: str = "auto"):
-        self._bus      = bus
-        self._lang     = language
-        self._lock     = threading.Lock()
-        self._method   = self._detect(method)
-        self._engine   = None   # pyttsx3 instance if used
-        log.info(f"AudioOutput: method={self._method}")
+        self._bus        = bus
+        self._lang       = language
+        self._lock       = threading.Lock()
+        self._aplay_dev  = self._detect_aplay_device()   # best non-HDMI card
+        self._method     = self._detect(method)
+        self._engine     = None   # pyttsx3 instance if used
+        log.info(f"AudioOutput: method={self._method}, aplay_dev={self._aplay_dev}")
+
+    @staticmethod
+    def _detect_aplay_device() -> Optional[str]:
+        """Return the first non-HDMI/non-vc4 ALSA output device (e.g. HifiBerry DAC)."""
+        try:
+            out = subprocess.check_output(
+                ["aplay", "-l"], stderr=subprocess.DEVNULL, timeout=3
+            ).decode(errors="replace")
+            for line in out.splitlines():
+                if not line.startswith("card "):
+                    continue
+                low = line.lower()
+                if "hdmi" in low or "vc4" in low:
+                    continue
+                # e.g. "card 2: sndrpihifiberry ..."
+                card_num = line.split(":")[0].split()[-1]
+                dev = f"plughw:{card_num},0"
+                log.info(f"AudioOutput: detected non-HDMI output → {dev} ({line.strip()})")
+                return dev
+        except Exception as e:
+            log.debug(f"AudioOutput: aplay device detection failed — {e}")
+        return None
 
     def say(self, text: str, wait: bool = True) -> None:
         """
@@ -117,15 +140,15 @@ class AudioOutput:
         except Exception as e:
             log.error(f"TTS espeak-ng: {e}"); return
 
-        # Try multiple ALSA devices in order (include USB PnP hw:2,0 and I2S)
+        # Build device list: detected non-HDMI card first, then fallbacks
+        dev_list = []
+        if self._aplay_dev:
+            dev_list.append(["-D", self._aplay_dev])
+        dev_list += [[], ["-D", "plug:default"], ["-D", "plughw:2,0"],
+                     ["-D", "plughw:1,0"], ["-D", "plughw:0,0"]]
+
         played = False
-        for dev_args in (
-            [],
-            ["-D", "plug:default"],
-            ["-D", "plughw:2,0"],   # USB PnP Sound Device (common on RPi)
-            ["-D", "plughw:1,0"],   # I2S amp after i2samp.sh
-            ["-D", "plughw:0,0"],
-        ):
+        for dev_args in dev_list:
             try:
                 subprocess.run(
                     ["aplay", "-q"] + dev_args + [wav_path],
