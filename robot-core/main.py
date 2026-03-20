@@ -146,7 +146,7 @@ class RobotRuntime:
             self._bus, self._modes, brain, self._audio, self._memory, cfg,
             vision=self._vision,
             motor=self._motor,
-            sensor=self._sensor,
+            sensor=self._sensors,
         )
         # Share the global ollama lock so vision + mind + summarizer never load two models at once
         _lock = get_ollama_lock()
