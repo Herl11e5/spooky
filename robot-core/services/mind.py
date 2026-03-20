@@ -330,14 +330,22 @@ class MindService:
                 self._audio.say("Non ho ancora analizzato la scena. Attendi un momento.")
             return
 
-        # "mi chiamo X" / "sono X" / "il mio nome è X" — auto-enroll
+        # "mi chiamo X" / "sono X" / "il mio nome è X" / "chiamami X" — auto-enroll
         import re as _re
-        m = (_re.search(r"mi chiamo\s+([a-zA-ZÀ-ÿ]+)", cmd_lo)
-             or _re.search(r"il mio nome[eè]\s+([a-zA-ZÀ-ÿ]+)", cmd_lo)
-             or _re.search(r"^sono\s+([a-zA-ZÀ-ÿ]{3,})\s*$", cmd_lo))
+        _enroll_patterns = [
+            r"mi chiamo\s+([a-zA-ZÀ-ÿ]+)",
+            r"il mio nome [eèé]\s+([a-zA-ZÀ-ÿ]+)",
+            r"il mio nome\s+([a-zA-ZÀ-ÿ]+)",
+            r"chiamami\s+([a-zA-ZÀ-ÿ]+)",
+            r"mi puoi chiamare\s+([a-zA-ZÀ-ÿ]+)",
+            r"^sono\s+([a-zA-ZÀ-ÿ]{3,})\s*$",
+        ]
+        m = next((_re.search(p, cmd_lo) for p in _enroll_patterns if _re.search(p, cmd_lo)), None)
         if m:
             name = m.group(1).strip().title()
-            self._audio.say(f"Ciao {name}! Guardami per un momento così ti memorizzo.")
+            self._audio.say(
+                f"Ciao {name}! Rimani fermo e guardami, ti memorizzo in pochi secondi."
+            )
             threading.Thread(
                 target=self._enroll_person,
                 args=(name,),
@@ -365,14 +373,36 @@ class MindService:
         if self._vision is None:
             self._audio.say("Non ho la telecamera attiva, non posso memorizzarti.")
             return
+
         person_id = name.lower().replace(" ", "_")
-        ok = self._vision.enroll_from_camera(person_id, name, n_frames=12, timeout_s=25.0)
+        spoken_halfway = False
+
+        def _progress(captured: int, total: int) -> None:
+            nonlocal spoken_halfway
+            # Feedback vocale a metà
+            if captured == total // 2 and not spoken_halfway:
+                spoken_halfway = True
+                self._audio.say("A metà, rimani fermo!")
+            # Evento dashboard
+            self._bus.publish(
+                EventType.SKILL_STARTED,
+                {"skill": "enroll", "name": name, "captured": captured, "total": total},
+                source="MindService",
+            )
+
+        log.info(f"MindService: starting enrollment for '{name}'")
+        ok = self._vision.enroll_from_camera(
+            person_id, name, n_frames=15, timeout_s=30.0, progress_cb=_progress
+        )
         if ok:
             self._audio.say(f"Perfetto {name}, ti ho memorizzato! Da ora ti riconoscerò.")
             self._memory.upsert_person(person_id, name, familiarity_delta=0.1)
             log.info(f"MindService: enrolled '{name}' (id={person_id})")
         else:
-            self._audio.say("Non sono riuscito a memorizzarti. Riprova avvicinandoti alla telecamera.")
+            self._audio.say(
+                f"Non sono riuscito a memorizzarti {name}. "
+                "Assicurati che il viso sia ben visibile alla telecamera e riprova."
+            )
 
     # ── face greeting ─────────────────────────────────────────────────────────
 

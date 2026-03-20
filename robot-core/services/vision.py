@@ -484,15 +484,18 @@ class VisionService:
         person_id: str,
         display_name: str,
         n_frames: int = 15,
-        timeout_s: float = 20.0,
+        timeout_s: float = 30.0,
+        progress_cb=None,   # callable(captured, total) — optional progress hook
     ) -> bool:
         """
         Interactively enroll a person: capture N face crops from live camera.
         Call from CLI / dashboard thread (blocks until done or timeout).
+        progress_cb(captured, total) is called after each successful capture.
         """
         log.info(f"Enrolling '{display_name}' — look at the camera ({n_frames} samples needed)")
         crops: List[np.ndarray] = []
         deadline = time.time() + timeout_s
+        last_progress = 0
 
         while len(crops) < n_frames and time.time() < deadline:
             frame = self._get_frame()
@@ -504,14 +507,30 @@ class VisionService:
                 crop = frame[y:y+h, x:x+w]
                 if crop.size > 0:
                     crops.append(crop)
-                    log.debug(f"Enroll: {len(crops)}/{n_frames}")
+                    log.info(f"Enroll '{display_name}': {len(crops)}/{n_frames}")
+                    if progress_cb and len(crops) != last_progress:
+                        last_progress = len(crops)
+                        try:
+                            progress_cb(len(crops), n_frames)
+                        except Exception:
+                            pass
+            else:
+                # No face detected — log periodically so user knows to look at camera
+                elapsed = timeout_s - (deadline - time.time())
+                if int(elapsed) % 5 == 0 and elapsed > 0:
+                    log.info(f"Enroll '{display_name}': waiting for face ({len(crops)}/{n_frames} captured)")
             time.sleep(0.15)
 
         if len(crops) < n_frames // 2:
-            log.error(f"Enrollment failed: only {len(crops)} samples captured")
+            log.error(f"Enrollment failed for '{display_name}': only {len(crops)}/{n_frames} samples")
             return False
 
-        return self._db.enroll_person(person_id, display_name, crops, self._recognizer)
+        ok = self._db.enroll_person(person_id, display_name, crops, self._recognizer)
+        if ok:
+            # Reload embeddings so live face loop immediately recognizes the new person
+            self._db.load_all_embeddings(self._recognizer)
+            log.info(f"Enrollment complete for '{display_name}' — recognizer reloaded")
+        return ok
 
     # ── capture loop (fast — just keeps _last_frame_rgb fresh) ───────────────
 
