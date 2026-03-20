@@ -266,9 +266,25 @@ class AudioInput:
 
     # ── STT stream loop ───────────────────────────────────────────────────────
 
+    @staticmethod
+    def _resample_numpy(raw: bytes, src_rate: int, dst_rate: int = 16000) -> bytes:
+        """Resample int16 mono bytes src_rate→dst_rate via numpy (Python 3.13-safe)."""
+        if src_rate == dst_rate:
+            return raw
+        import numpy as np
+        samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+        if len(samples) == 0:
+            return raw
+        target_len = max(1, int(round(len(samples) * dst_rate / src_rate)))
+        resampled = np.interp(
+            np.linspace(0, len(samples) - 1, target_len),
+            np.arange(len(samples)),
+            samples,
+        ).astype(np.int16)
+        return resampled.tobytes()
+
     def _run(self) -> None:
         import json
-        import audioop
         import vosk
         import sounddevice as sd
 
@@ -293,17 +309,14 @@ class AudioInput:
         if self._device is not None:
             stream_kwargs["device"] = self._device
 
-        resample_state = None   # audioop.ratecv state
         try:
             with sd.RawInputStream(**stream_kwargs) as stream:
                 while self._active:
                     data, _ = stream.read(blocksize)
                     raw = bytes(data)
-                    # Resample to 16000 Hz if needed
+                    # Resample to 16000 Hz if needed (numpy — Python 3.13 safe)
                     if hw_rate != 16000:
-                        raw, resample_state = audioop.ratecv(
-                            raw, 2, 1, hw_rate, 16000, resample_state
-                        )
+                        raw = self._resample_numpy(raw, hw_rate, 16000)
                     if rec.AcceptWaveform(raw):
                         result = json.loads(rec.Result())
                         text   = result.get("text", "").strip()
