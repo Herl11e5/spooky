@@ -38,13 +38,15 @@ from core.safety import SafetyMonitor
 
 log = logging.getLogger(__name__)
 
-# ── Global Ollama lock (shared with MindService) ─────────────────────────────
-# Imported lazily to avoid circular imports; set by main.py via set_ollama_lock()
-_OLLAMA_LOCK: Optional[threading.Lock] = None
+# ── Vision-dedicated ollama lock (independent from MindService) ──────────────
+# Vision uses moondream; Mind uses llama3.2:3b — both fit in 8 GB RAM.
+# A separate lock prevents two concurrent moondream calls but allows mind to
+# run its text model at the same time.
+_VISION_LOCK = threading.Lock()
 
+# Kept for API compatibility with main.py (call is now a no-op)
 def set_ollama_lock(lock: threading.Lock) -> None:
-    global _OLLAMA_LOCK
-    _OLLAMA_LOCK = lock
+    pass   # vision uses _VISION_LOCK, not the shared text-model lock
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -430,8 +432,8 @@ class VisionService:
 
         # Intervals
         self._face_interval   = cfg.get("camera.face_detect_interval_s", 0.25)
-        self._scene_interval  = cfg.get("vision_llm.scene_interval_s",   30)
-        self._object_interval = cfg.get("vision_llm.object_interval_s",  45)
+        self._scene_interval  = cfg.get("vision_llm.scene_interval_s",   15)
+        self._object_interval = cfg.get("vision_llm.object_interval_s",  20)
 
         # State
         self._active          = False
@@ -685,31 +687,31 @@ class VisionService:
         if frame is None:
             return
         ram = self._safety.get_ram_free_mb() if hasattr(self._safety, 'get_ram_free_mb') else 9999
-        min_ram = self._cfg.get("vision_llm.min_ram_mb_to_infer", 1200)
+        min_ram = self._cfg.get("vision_llm.min_ram_mb_to_infer", 800)
         if ram < min_ram:
             log.warning(f"VisionService: scene skip — RAM {ram}MB < {min_ram}MB")
             return
 
-        if _OLLAMA_LOCK and not _OLLAMA_LOCK.acquire(blocking=True, timeout=20):
-            log.debug("VisionService: scene skip — ollama busy >20s")
+        if not _VISION_LOCK.acquire(blocking=True, timeout=30):
+            log.debug("VisionService: scene skip — vision lock busy >30s")
             return
         try:
             import ollama
             img_b64    = self._frame_to_b64(frame)
-            keep_alive = self._cfg.get("vision_llm.keep_alive_s", 120)
-            max_tok    = self._cfg.get("vision_llm.max_tokens", 90)
+            keep_alive = self._cfg.get("vision_llm.keep_alive_s", 300)
+            max_tok    = self._cfg.get("vision_llm.max_tokens", 80)
             resp = ollama.chat(
                 model=self._vision_model,
                 messages=[{
                     "role": "user",
                     "content": (
-                        "Sei Spooky, un robot ragno sulla scrivania. "
-                        "Descrivi in italiano cosa vedi: oggetti, persone, ambiente. "
-                        "2 frasi brevi, prima persona. Inizia con 'Vedo'"
+                        "Sei Spooky, robot ragno. "
+                        "In italiano: descrivi in 1-2 frasi cosa vedi (oggetti, persone, spazio). "
+                        "Prima persona, inizia con 'Vedo'."
                     ),
                     "images": [img_b64],
                 }],
-                options={"temperature": 0.3, "num_predict": max_tok},
+                options={"temperature": 0.2, "num_predict": max_tok},
                 keep_alive=keep_alive,
             )
             desc = self._extract_text(resp)
@@ -722,27 +724,26 @@ class VisionService:
         except Exception as e:
             log.warning(f"VisionService scene analysis: {e}")
         finally:
-            if _OLLAMA_LOCK:
-                _OLLAMA_LOCK.release()
+            _VISION_LOCK.release()
 
     def _analyze_objects(self) -> None:
         frame = self._get_frame()
         if frame is None:
             return
-        if _OLLAMA_LOCK and not _OLLAMA_LOCK.acquire(blocking=True, timeout=20):
-            log.debug("VisionService: object skip — ollama busy >20s")
+        if not _VISION_LOCK.acquire(blocking=True, timeout=30):
+            log.debug("VisionService: objects skip — vision lock busy >30s")
             return
         try:
             import ollama
             img_b64    = self._frame_to_b64(frame)
-            keep_alive = self._cfg.get("vision_llm.keep_alive_s", 120)
+            keep_alive = self._cfg.get("vision_llm.keep_alive_s", 300)
             resp = ollama.chat(
                 model=self._vision_model,
                 messages=[{
                     "role": "user",
                     "content": (
-                        "Elenca SOLO gli oggetti fisici visibili. "
-                        "Italiano, virgole, max 8 oggetti, solo sostantivi."
+                        "List only the physical objects visible in this image. "
+                        "Italian, comma-separated, max 10 items, nouns only."
                     ),
                     "images": [img_b64],
                 }],
@@ -759,8 +760,7 @@ class VisionService:
         except Exception as e:
             log.warning(f"VisionService object analysis: {e}")
         finally:
-            if _OLLAMA_LOCK:
-                _OLLAMA_LOCK.release()
+            _VISION_LOCK.release()
 
     def _synthetic_scene(self) -> None:
         """Fallback quando nessun modello visivo è disponibile.

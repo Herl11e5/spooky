@@ -148,10 +148,11 @@ class RobotRuntime:
             motor=self._motor,
             sensor=self._sensors,
         )
-        # Share the global ollama lock so vision + mind + summarizer never load two models at once
+        # Mind + summarizer share the same text-model lock (llama3.2)
+        # Vision uses its own internal lock (moondream) — the two run independently
         _lock = get_ollama_lock()
-        set_ollama_lock(_lock)
         set_summarizer_lock(_lock)
+        # NOTE: set_ollama_lock() NOT called for vision — vision has its own _VISION_LOCK
 
         # ── Learning service ──────────────────────────────────────────────────────
         self._learning = LearningService(self._bus, self._memory, cfg)

@@ -267,10 +267,17 @@ class MindService:
         self._active = False
         self._thought_thread: Optional[threading.Thread] = None
 
+        # Visual context (updated by VisionService events)
+        self._last_seen_scene:   str = ""
+        self._last_seen_objects: str = ""
+        self._last_scene_ts:     float = 0.0
+
         # Subscribe
         bus.subscribe(EventType.COMMAND_PARSED,    self._on_command)
         bus.subscribe(EventType.PERSON_IDENTIFIED, self._on_person_identified)
         bus.subscribe(EventType.MODE_CHANGED,      self._on_mode_changed)
+        bus.subscribe(EventType.SCENE_ANALYZED,    self._on_scene_analyzed)
+        bus.subscribe(EventType.OBJECTS_DETECTED,  self._on_objects_detected)
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
@@ -497,13 +504,15 @@ class MindService:
 
     def _emit_thought(self) -> None:
         context = self._build_context()
-        # Give the LLM something concrete to react to so it doesn't hallucinate
-        scene = self._vision.last_scene if self._vision else ""
-        prompt = (
-            f"Osserva la scena: '{scene}'. Dì una frase breve su cosa noti."
-            if scene else
-            "Esprimi un breve pensiero su quello che senti o percepisci come robot."
-        )
+        # Usa la scena più recente come stimolo concreto
+        scene   = self._last_seen_scene or (self._vision.last_scene if self._vision else "")
+        objects = self._last_seen_objects or (self._vision.last_objects if self._vision else "")
+        if scene:
+            prompt = f"Hai appena visto: '{scene}'. Reagisci con curiosità in 1-2 frasi."
+        elif objects:
+            prompt = f"Vedi questi oggetti: {objects}. Cosa ti incuriosisce di più? 1-2 frasi."
+        else:
+            prompt = "Cosa percepisci in questo momento come robot ragno sulla scrivania? 1-2 frasi spontanee."
         thought = self._think(prompt, context=context, trigger="pensiero autonomo")
         if thought:
             log.info(f"💭 {thought}")
@@ -513,6 +522,19 @@ class MindService:
                 action="thought",
                 mode=self._mm.current.value,
             )
+
+    # ── vision events ─────────────────────────────────────────────────────────
+
+    def _on_scene_analyzed(self, ev) -> None:
+        desc = ev.get("description") or ev.get("text", "")
+        if desc:
+            self._last_seen_scene = desc
+            self._last_scene_ts = time.time()
+
+    def _on_objects_detected(self, ev) -> None:
+        objs = ev.get("objects") or ev.get("text", "")
+        if objs:
+            self._last_seen_objects = objs
 
     # ── mode changes ──────────────────────────────────────────────────────────
 
@@ -543,7 +565,16 @@ class MindService:
         return reply
 
     def _build_context(self) -> str:
-        return self._memory.summary(5)
+        parts = []
+        mem = self._memory.summary(5)
+        if mem:
+            parts.append(mem)
+        # Includi la scena recente se fresca (< 60s)
+        if self._last_seen_scene and time.time() - self._last_scene_ts < 60:
+            parts.append(f"Sto guardando: {self._last_seen_scene}")
+        if self._last_seen_objects:
+            parts.append(f"Oggetti visibili: {self._last_seen_objects}")
+        return " | ".join(parts) if parts else ""
 
     def __repr__(self) -> str:
         return (

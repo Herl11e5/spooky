@@ -199,6 +199,17 @@ class DashboardService:
                 "ram":  s.get("ram_free_mb", 8192),
             })
 
+        @app.route("/api/vision")
+        def api_vision():
+            if self._vision:
+                return jsonify({
+                    "scene":   self._vision.last_scene,
+                    "objects": self._vision.last_objects,
+                    "model":   getattr(self._vision, "_vision_model", None),
+                    "camera":  getattr(self._vision._camera, "backend", "?"),
+                })
+            return jsonify({"scene": "", "objects": "", "model": None, "camera": "none"})
+
         @app.route("/api/scan", methods=["POST"])
         def api_scan():
             if not self._motor or not self._sensor:
@@ -686,6 +697,16 @@ body{background:var(--bg);color:var(--text);font-family:'Nunito',sans-serif;font
     </div>
   </div>
 
+  <!-- Visione attiva -->
+  <div class="card">
+    <h2>👁️ Visione <span id="vision-model-lbl" style="font-size:.6rem;color:var(--muted);font-family:'Nunito'"></span>
+      <span id="vision-age" style="font-size:.58rem;color:var(--muted);float:right;font-family:'Nunito'">—</span>
+    </h2>
+    <div id="vision-scene" style="font-size:.8rem;color:var(--green);min-height:2.2rem;line-height:1.4;margin-bottom:.4rem">—</div>
+    <div style="font-size:.65rem;color:var(--muted);margin-bottom:.25rem">Oggetti rilevati:</div>
+    <div id="vision-objects" style="font-size:.75rem;color:var(--blue);min-height:1.4rem;word-break:break-word">—</div>
+  </div>
+
   <!-- Sensors -->
   <div class="card">
     <h2>📡 Sensori</h2>
@@ -966,6 +987,25 @@ function applyMic(state, transcript){
   if(transcript!=null) document.getElementById('transcript').textContent=transcript||'';
 }
 
+/* ── VISION PANEL ── */
+let _vision={scene:'',objects:'',lastTs:0};
+setInterval(()=>{
+  const el=document.getElementById('vision-age');
+  if(!el||_vision.lastTs===0) return;
+  const s=Math.round((Date.now()-_vision.lastTs)/1000);
+  el.textContent='aggiornato '+s+'s fa';
+  el.style.color=s>60?'var(--red)':s>30?'var(--yellow)':'var(--green)';
+},1000);
+function applyVision(scene,objects,model){
+  _vision={scene:scene||'',objects:objects||'',lastTs:Date.now()};
+  const se=document.getElementById('vision-scene');
+  const oe=document.getElementById('vision-objects');
+  const ml=document.getElementById('vision-model-lbl');
+  if(se && scene) se.textContent=scene;
+  if(oe && objects) oe.textContent=objects;
+  if(ml && model) ml.textContent='['+model+']';
+}
+
 /* ── SENSORS ── */
 function setSensor(id,valId,val,warnFn,dangerFn){
   const v=document.getElementById(valId);
@@ -1029,6 +1069,19 @@ async function fetchState(){
 }
 fetchState(); setInterval(fetchState,5000);
 
+/* ── VISION POLL (fallback se SSE mancante) ── */
+async function fetchVision(){
+  try{
+    const r=await fetch('/api/vision'); const d=await r.json();
+    if(d.scene||d.objects) applyVision(d.scene||'',d.objects||'',d.model||'');
+    const ml=document.getElementById('vision-model-lbl');
+    if(ml && d.model) ml.textContent='['+(d.model||'?')+']';
+    const co=document.getElementById('dot-cam');
+    if(co) co.className='dot '+(d.camera&&d.camera!=='none'&&d.camera!=='sim'?'on':'warn');
+  }catch(e){}
+}
+fetchVision(); setInterval(fetchVision,5000);
+
 /* ── FACTS POLL ── */
 async function fetchFacts(){
   try{
@@ -1063,12 +1116,18 @@ es.onmessage=e=>{
     }
     if(d.type==='command') addBubble('user',d.text);
     if(d.type==='scene'||d.type==='scene_analyzed'){
-      const desc=d.text||d.description||'—';
-      document.getElementById('cam-overlay').textContent=desc;
+      const desc=d.text||d.description||'';
+      if(desc){
+        document.getElementById('cam-overlay').textContent=desc;
+        applyVision(desc, _vision.objects);
+      }
     }
     if(d.type==='objects_detected'){
       const obj=d.text||d.objects||'';
-      if(obj) document.getElementById('cam-overlay').textContent='🔍 '+obj;
+      if(obj){
+        document.getElementById('cam-overlay').textContent='🔍 '+obj;
+        applyVision(_vision.scene, obj);
+      }
     }
     if(d.type==='person'){
       document.getElementById('person-avatar').textContent='😊';
