@@ -1,86 +1,47 @@
-# 🕷️ Spooky — Robot Companion Autonomo
+# Spooky — Robot Companion da Scrivania
 
-Robot intelligente completamente locale: **doppio modello AI** (Visione + Ragionamento).
-Nessun cloud, nessuna telemetria, tutti i dati restano sul dispositivo.
-
-```
-📷 Moondream (3.5 GB)           🧠 Llama3.2:3b (2.0 GB)
-└─ Vede oggetti/scene            └─ Ragiona e comunica
-└─ Corre: ogni 120s             └─ Sempre disponibile
-```
+Robot autonomo basato su **SunFounder PiCrawler + Raspberry Pi 5 (8 GB)**.
+Completamente locale: nessun cloud, nessuna telemetria, tutti i dati restano sul dispositivo.
 
 ---
 
-## 🚀 Quick Start (macOS Development)
+## Hardware richiesto
 
-```bash
-# Rendi gli script eseguibili
-chmod +x robot-core/scripts/*.sh
-
-# Setup completo (Ollama + Python + dipendenze)
-bash robot-core/scripts/install_mac.sh
-
-# Scarica modelli AI (terminale separato)
-bash robot-core/scripts/setup_ollama.sh
-
-# Terminal 1: Avvia server Ollama
-ollama serve
-
-# Terminal 2: Avvia Spooky
-source robot-core/venv/bin/activate
-cd robot-core
-python main.py --debug
-
-# Visualizza sul browser
-# http://localhost:5000  → Dashboard
-```
-
----
-
-## 🦾 Installazione RPi 5 (Production)
-
-```bash
-# 1. Clona il repo su RPi
-git clone https://github.com/Herl11e5/spooky.git ~/spooky
-cd ~/spooky
-
-# 2. Setup automatico (Python 3.11, GPIO, Ollama, systemd)
-chmod +x robot-core/scripts/install_rpi.sh
-bash robot-core/scripts/install_rpi.sh
-
-# 3. Configura parametri locali
-nano robot-core/config/local.yaml
-
-# 4. Avvio manuale (test)
-bash robot-core/scripts/start.sh
-
-# 5. Avvio automatico
-sudo systemctl start spooky
-sudo systemctl enable spooky    # Auto-boot
-sudo journalctl -u spooky -f    # Log
-```
-
-### Cosa installa `install_rpi.sh`
-
-- ✅ Python 3.11+ + venv
-- ✅ picamera2 + libcamera (camera RPi)
-- ✅ robot-hat v2.0 (SunFounder servos)
-- ✅ Ollama + modelli AI
-- ✅ Vosk modello Italian
-- ✅ Systemd service (auto-boot)
-
----
-
-## 📋 Hardware (RPi)
-
-| Componente | Note |
+| Componente | Dettaglio |
 |---|---|
-| Raspberry Pi 5 | 8 GB RAM (minimo 4 GB) |
-| SunFounder PiCrawler | Chassis + 12 servos + robot-hat |
-| Camera | Pi Camera Module 3 |
+| Raspberry Pi 5 | 8 GB RAM (consigliato) |
+| SunFounder PiCrawler | Kit completo (chassis, 12 servos, scheda robot-hat) |
+| Camera | Pi Camera Module 3 o compatibile libcamera |
 | Microfono | USB o I2S |
-| Altoparlante | USB o I2S |
-| Alimentazione | Ufficiale 27W USB-C |
+| Altoparlante | USB o I2S (es. HiFiBerry MiniAmp) |
+| Alimentazione | Ufficiale RPi 27W USB-C |
+
+---
+
+## Installazione (RPi)
+
+```bash
+# 1. Clona il repo
+git clone https://github.com/Herl11e5/spooky.git ~/spooky
+
+# 2. Setup completo automatico
+#    (Python 3.11, dipendenze, ollama, vosk, systemd service)
+bash ~/spooky/robot-core/scripts/install_rpi.sh
+
+# 3. Configura parametri locali (Telegram, HA, override LLM, ecc.)
+nano ~/spooky/robot-core/config/local.yaml
+
+# 4a. Avvio manuale (per test)
+bash ~/spooky/robot-core/scripts/start.sh
+
+# 4b. Avvio automatico al boot
+sudo systemctl start spooky
+sudo journalctl -u spooky -f
+
+# Dashboard → http://<ip-rpi>:5000
+```
+
+`install_rpi.sh` scarica automaticamente: vosk-model-small-it-0.22 (~50 MB) e llama3.2:1b (~700 MB).
 
 ---
 
