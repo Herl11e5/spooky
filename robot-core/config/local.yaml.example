@@ -5,48 +5,73 @@
 # I valori qui sovrascrivono robot.yaml (deep merge).
 
 robot:
-  name: "Spooky"
+  name: "Spooky-Dev"
+  # language: "en"  # it / en
 
-# ── Override modalità ─────────────────────────────────────────────────────────
+logging:
+  # level: "DEBUG"  # DEBUG / INFO / WARNING
+
+# ── LLM Configuration ─────────────────────────────────────────────────────────
+# Modello di pensiero (testo) - sempre caricato
+llm:
+  model_priority:
+    - "llama3.2:3b"        # 2 GB - perfetto per RPi 8GB
+    - "llama3.2"           # fallback full version
+  # temperature: 0.70
+  # keep_alive_s: 180      # quanto tempo tenere caricato
+
+# ── Vision LLM Configuration ──────────────────────────────────────────────────
+# Modello di visione - carica solo per analisi
+vision_llm:
+  model_priority:
+    - "moondream"          # 3.5 GB - leggero e veloce
+    - "llava:7b"           # alternativa più pesante
+  keep_alive_s: 0          # unload immediato (libera 3.5 GB)
+  scene_interval_s: 120    # analyzes scene every 2 min
+  object_interval_s: 150   # detect objects every 2.5 min
+
+# ── Audio ─────────────────────────────────────────────────────────────────────
+audio:
+  # wake_word: "spooky"
+  # tts_method: "auto"       # auto / espeak_aplay / pyttsx3 / silent
+  # Uncomment per usare un microfono specifico:
+  # mic_device: 2  # scopri con: python3 -c "import sounddevice; print(sounddevice.query_devices())"
+
+# ── Camera ────────────────────────────────────────────────────────────────────
+# camera:
+#   width: 640
+#   height: 480
+#   fps: 30
+
+# ── Face Recognition ─────────────────────────────────────────────────────────
+# face:
+#   confidence_high: 0.80  # confidence per "greeting by name"
+#   confidence_mid: 0.55   # confidence per "ask confirmation"
+
+# ── Safety (RPi only) ────────────────────────────────────────────────────────
+# safety:
+#   max_speed: 60          # % motor power
+#   max_cpu_temp_c: 80.0
+#   max_actuator_errors: 50
+
+# ── Override modalità ────────────────────────────────────────────────────────
 # modes:
 #   night_watch_start: "22:30"
 #   night_watch_end:   "07:30"
 
-# ── Telegram alert (opzionale) ────────────────────────────────────────────────
+# ── Integrazioni Esterne (Fase 2) ────────────────────────────────────────────
 # alerts:
 #   telegram:
 #     enabled: true
 #     token: "123456789:ABCdef-il-tuo-token"
 #     chat_id: "123456789"
-
-# ── Webhook (opzionale) ───────────────────────────────────────────────────────
-# alerts:
 #   webhook:
 #     enabled: true
 #     url: "http://192.168.1.10:8080/spooky/alert"
-
-# ── Home Assistant (opzionale) ────────────────────────────────────────────────
-# alerts:
 #   home_assistant:
 #     enabled: true
 #     url: "http://homeassistant.local:8123"
 #     token: "il-tuo-long-lived-token"
-
-# ── Dashboard (se vuoi limitare l'accesso) ────────────────────────────────────
-# dashboard:
-#   host: "127.0.0.1"   # solo localhost
-#   port: 5000
-
-# ── Night watch silenziosa o con voce ────────────────────────────────────────
-# night_watch:
-#   silent_alerts: false     # parla quando rileva qualcosa
-#   save_jpeg: true          # salva foto su evento L2+
-
-# ── LLM: modello diverso ─────────────────────────────────────────────────────
-# llm:
-#   model_priority:
-#     - "llama3.2:3b"        # usa 3b se disponibile
-#     - "llama3.2:1b"
 
 # ── Logging verboso per debug ─────────────────────────────────────────────────
 # logging:
