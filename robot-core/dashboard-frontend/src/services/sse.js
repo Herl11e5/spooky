@@ -94,7 +94,7 @@ export const initSSE = () => {
   
   es.onerror = (err) => {
     console.warn('SSE disconnected:', err)
-    // Try to reconnect after 3 seconds
+    es.close()
     setTimeout(initSSE, 3000)
   }
   

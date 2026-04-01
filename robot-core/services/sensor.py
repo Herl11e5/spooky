@@ -163,6 +163,10 @@ class SensorService:
         self._pitch: float = 0.0
         self._roll:  float = 0.0
 
+        # Pickup detection state
+        self._is_picked_up: bool = False
+        self._accel_mag_prev: float = 1.0  # ~1g when resting
+
         # Hardware
         self._ultrasonic: Optional[object] = None
         if _ULTRASONIC_AVAILABLE:
@@ -232,7 +236,28 @@ class SensorService:
                 self._ram_free_mb = ram
                 self._pitch = pitch
                 self._roll  = roll
-                # Publish heartbeat with current system state
+
+                # Pickup detection via accelerometer magnitude
+                if self._edge.available:
+                    try:
+                        ax, ay, az = self._edge._read_accel()
+                        mag = math.sqrt(ax*ax + ay*ay + az*az)
+                        if not self._is_picked_up and mag < 0.35:
+                            self._is_picked_up = True
+                            self._bus.publish(EventType.PICKED_UP,
+                                              {"accel_mag": round(mag, 3)},
+                                              source="SensorService")
+                            log.info(f"SensorService: PICKED UP (mag={mag:.2f}g)")
+                        elif self._is_picked_up and mag > 0.70:
+                            self._is_picked_up = False
+                            self._bus.publish(EventType.PUT_DOWN,
+                                              {"accel_mag": round(mag, 3)},
+                                              source="SensorService")
+                            log.info(f"SensorService: PUT DOWN (mag={mag:.2f}g)")
+                        self._accel_mag_prev = mag
+                    except Exception:
+                        pass
+
                 self._bus.publish(
                     EventType.HEARTBEAT,
                     {

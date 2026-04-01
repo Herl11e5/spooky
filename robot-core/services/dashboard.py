@@ -117,16 +117,26 @@ class DashboardService:
 
     def _run_flask(self):
         try:
-            from flask import Flask, request, jsonify, Response, render_template_string
+            from flask import Flask, request, jsonify, Response, send_from_directory
+            import os
         except ImportError:
             log.error("flask not installed"); return
 
-        app = Flask(__name__)
+        # Get the static folder path
+        static_path = os.path.join(os.path.dirname(__file__), 'static', 'dashboard')
+        
+        app = Flask(__name__, static_folder=static_path, static_url_path='/')
         app.logger.setLevel(logging.ERROR)
 
         @app.route("/")
-        def index():
-            return render_template_string(_HTML)
+        @app.route("/<path:path>")
+        def index(path=''):
+            """Serve React app - index.html for all non-API routes"""
+            # If path is assets or known files, serve them
+            if path and os.path.exists(os.path.join(static_path, path)):
+                return send_from_directory(static_path, path)
+            # Otherwise serve index.html (React Router handles client-side routes)
+            return send_from_directory(static_path, 'index.html')
 
         @app.route("/camera")
         def camera():

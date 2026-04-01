@@ -39,43 +39,79 @@ class EmotionService:
     and AudioService (what sound to make).
     """
 
+    # Different rate limits by expression type
+    _MIN_INTERVAL_FULL   = 3.0   # full choreography (happy dance, wary retreat)
+    _MIN_INTERVAL_MICRO  = 0.8   # micro-expressions (startle, fidget)
+    _AMBIENT_INTERVAL    = 20.0  # spontaneous ambient micro-expressions
+
     def __init__(self, bus: EventBus):
         self._bus = bus
         self._lock = threading.RLock()
         self._active = False
         self._current_mood = Mood.CONTENT
         self._mood_start_time = time.time()
-        self._last_expression_time = 0.0
-
-        # Rate-limit expressions to avoid spamming motors
-        self._MIN_EXPRESSION_INTERVAL = 2.0  # seconds
+        self._last_full_expression_time = 0.0
+        self._last_micro_expression_time = 0.0
+        self._last_ambient_time = time.time()
+        self._choreo: Optional[object] = None
 
         # Reference to motor and audio services (set later via set_services)
         self._motor_service: Optional[object] = None
         self._audio_service: Optional[object] = None
 
         bus.subscribe(EventType.PERSONALITY_MOOD_CHANGED, self._on_mood_changed)
+        bus.subscribe(EventType.PICKED_UP,  self._on_picked_up)
+        bus.subscribe(EventType.PUT_DOWN,   self._on_put_down)
+        bus.subscribe(EventType.UNUSUAL_SOUND, self._on_startle)
 
-    def set_services(self, motor_service: object, audio_service: object) -> None:
-        """Called by main.py to inject motor and audio service references."""
+    def set_services(self, motor_service: object, audio_service: object,
+                     choreography: Optional[object] = None) -> None:
+        """Called by main.py to inject motor, audio, and choreography references."""
         self._motor_service = motor_service
         self._audio_service = audio_service
+        self._choreo = choreography
 
     def start(self) -> None:
         self._active = True
+        # Ambient micro-expression thread
+        threading.Thread(
+            target=self._ambient_tick, daemon=True, name="EmotionAmbient"
+        ).start()
         log.info("EmotionService started")
 
     def stop(self) -> None:
         self._active = False
         log.info("EmotionService stopped")
 
+    # ── ambient tick ──────────────────────────────────────────────────────────
+
+    def _ambient_tick(self) -> None:
+        """Spontaneous micro-expressions even without explicit mood events."""
+        while self._active:
+            time.sleep(5.0)
+            if not self._active:
+                break
+            now = time.time()
+            if now - self._last_ambient_time < self._AMBIENT_INTERVAL:
+                continue
+            if not self._motor_service:
+                continue
+            # Pick a lightweight ambient micro-expression
+            action = random.choice([
+                "fidget", "head_tilt_left", "head_tilt_right",
+                "curiosity_pan", None, None,   # None = skip
+            ])
+            if action and self._choreo:
+                try:
+                    self._choreo.play(action)
+                    self._last_ambient_time = now
+                except Exception:
+                    pass
+
     # ── event handlers ────────────────────────────────────────────────────────
 
     def _on_mood_changed(self, event_data: Dict) -> None:
-        """
-        Triggered when Personality.current_mood changes significantly.
-        Called by PersonalityService via bus event.
-        """
+        """Triggered when dominant mood changes (published by PersonalityService)."""
         new_mood = event_data.get("mood", Mood.CONTENT)
         intensity = event_data.get("intensity", 0.5)
 
@@ -83,17 +119,58 @@ class EmotionService:
             self._current_mood = new_mood
             self._mood_start_time = time.time()
 
-        # Express the emotion if it's strong enough
         if intensity > 0.3:
             self._express_emotion(new_mood, intensity)
+
+    def _on_picked_up(self, ev) -> None:
+        """Immediate startle + scared reaction when lifted."""
+        if self._choreo:
+            try:
+                self._choreo.play("picked_up_react")
+            except Exception:
+                pass
+        if self._audio_service:
+            try:
+                self._audio_service.play_sound("chirp_curious")
+            except Exception:
+                pass
+        self._last_micro_expression_time = time.time()
+
+    def _on_put_down(self, ev) -> None:
+        """Reorientation after being set down."""
+        if self._choreo:
+            try:
+                self._choreo.play("put_down_react")
+            except Exception:
+                pass
+        self._last_micro_expression_time = time.time()
+
+    def _on_startle(self, ev) -> None:
+        """React to unexpected sounds with a quick micro-expression."""
+        now = time.time()
+        if now - self._last_micro_expression_time < self._MIN_INTERVAL_MICRO:
+            return
+        self._last_micro_expression_time = now
+        if self._choreo:
+            try:
+                self._choreo.play("startle")
+            except Exception:
+                pass
 
     def _express_emotion(self, mood: Mood, intensity: float = 0.5) -> None:
         """Coordinate motor + audio to express an emotion."""
         now = time.time()
-        if now - self._last_expression_time < self._MIN_EXPRESSION_INTERVAL:
-            return  # Rate limit
+        # Micro-expressions (surprised, curious) have a shorter rate limit
+        is_micro = mood in (Mood.SURPRISED, Mood.CURIOUS)
+        min_interval = self._MIN_INTERVAL_MICRO if is_micro else self._MIN_INTERVAL_FULL
+        last = self._last_micro_expression_time if is_micro else self._last_full_expression_time
+        if now - last < min_interval:
+            return
 
-        self._last_expression_time = now
+        if is_micro:
+            self._last_micro_expression_time = now
+        else:
+            self._last_full_expression_time = now
 
         try:
             if mood == Mood.HAPPY:
@@ -110,58 +187,53 @@ class EmotionService:
                 self._express_bored(intensity)
             elif mood == Mood.CONTENT:
                 self._express_content(intensity)
+            elif mood == Mood.SURPRISED:
+                self._express_surprised(intensity)
         except Exception as e:
             log.error(f"Error expressing emotion {mood.value}: {e}")
 
     # ── emotion expressions ───────────────────────────────────────────────────
 
     def _express_happy(self, intensity: float) -> None:
-        """Wiggle, spin, chirp enthusiastically."""
-        if not self._motor_service or not self._audio_service:
-            return
-
+        """Wiggle, celebratory spin, chirp enthusiastically."""
         try:
-            # Wiggle dance
-            for _ in range(int(2 * intensity)):
-                self._motor_service.wiggle_dance()
-                time.sleep(0.3)
-
-            # Antennae twitch
-            if hasattr(self._motor_service, "twitch_antennae"):
-                self._motor_service.twitch_antennae()
-
-            # Happy chirps
-            chirps = int(3 * intensity)
-            for _ in range(chirps):
-                self._audio_service.play_sound("chirp_happy")
-                time.sleep(0.2)
-
+            if self._choreo:
+                self._choreo.play("excited" if intensity > 0.6 else "greeting")
+            if self._motor_service:
+                try:
+                    self._motor_service.wiggle_dance()
+                except Exception:
+                    pass
+            if self._audio_service:
+                for _ in range(min(int(2 * intensity), 3)):
+                    self._audio_service.play_sound("chirp_happy")
+                    time.sleep(0.15)
             log.info(f"Expressed happy (intensity {intensity:.2f})")
         except Exception as e:
             log.debug(f"Could not express happy: {e}")
 
     def _express_curious(self, intensity: float) -> None:
-        """Slow head pan, tilt up, bright beep."""
-        if not self._motor_service or not self._audio_service:
-            return
-
+        """Head tilt + investigate + curious chirp."""
         try:
-            # Slow head pan (look around)
-            if hasattr(self._motor_service, "pan_head"):
-                self._motor_service.pan_head(speed=10)  # Slow
-                time.sleep(1.5)
-                self._motor_service.pan_head(0)  # Center
-
-            # Tilt up (ears forward)
-            if hasattr(self._motor_service, "tilt_head"):
-                self._motor_service.tilt_head(20)
-
-            # Curious chirp
-            self._audio_service.play_sound("chirp_curious")
-
+            if self._choreo:
+                tilt = random.choice(["head_tilt_left", "head_tilt_right", "investigate"])
+                self._choreo.play(tilt)
+            if self._audio_service:
+                self._audio_service.play_sound("chirp_curious")
             log.info(f"Expressed curious (intensity {intensity:.2f})")
         except Exception as e:
             log.debug(f"Could not express curious: {e}")
+
+    def _express_surprised(self, intensity: float) -> None:
+        """Quick startle reaction — fast head snap + sound."""
+        try:
+            if self._choreo:
+                self._choreo.play("startle")
+            if self._audio_service:
+                self._audio_service.play_sound("chirp_curious")
+            log.info(f"Expressed surprised (intensity {intensity:.2f})")
+        except Exception as e:
+            log.debug(f"Could not express surprised: {e}")
 
     def _express_playful(self, intensity: float) -> None:
         """Mini-hop, unpredictable movements, chirping."""
@@ -234,20 +306,12 @@ class EmotionService:
             log.debug(f"Could not express tired: {e}")
 
     def _express_bored(self, intensity: float) -> None:
-        """Listless wandering, heavy sighs."""
-        if not self._motor_service or not self._audio_service:
-            return
-
+        """Listless look-around, heavy sigh."""
         try:
-            # Slow wandering
-            if hasattr(self._motor_service, "move_forward"):
-                self._motor_service.move_forward(distance=10, speed=20)
-                time.sleep(1.0)
-                self._motor_service.move_backward(distance=10, speed=20)
-
-            # Bored sigh
-            self._audio_service.play_sound("sigh_bored")
-
+            if self._choreo:
+                self._choreo.play("bored_sigh")
+            if self._audio_service:
+                self._audio_service.play_sound("sigh_bored")
             log.info(f"Expressed bored (intensity {intensity:.2f})")
         except Exception as e:
             log.debug(f"Could not express bored: {e}")

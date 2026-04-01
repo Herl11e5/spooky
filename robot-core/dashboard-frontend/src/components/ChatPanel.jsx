@@ -15,14 +15,14 @@ export default function ChatPanel() {
     }
   }, [chatHistory])
 
-  const handleSend = async () => {
-    if (!input.trim()) return
-    
-    const cmd = input.trim()
+  const handleSend = async (forcedCmd) => {
+    const cmd = (forcedCmd || input).trim()
+    if (!cmd) return
+
     setInput('')
     addChatMessage('user', cmd)
     setLoading(true)
-    
+
     try {
       await api.sendCommand(cmd)
     } catch (err) {
@@ -82,10 +82,7 @@ export default function ChatPanel() {
         {quickCommands.map(({ label, cmd }) => (
           <button
             key={cmd}
-            onClick={() => handleSend()}
-            onMouseDown={() => {
-              setInput(cmd)
-            }}
+            onClick={() => handleSend(cmd)}
             className="text-xs px-2 py-1 bg-spooky-neon-cyan/20 text-spooky-neon-cyan rounded hover:bg-spooky-neon-cyan/40 truncate"
           >
             {label}

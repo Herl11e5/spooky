@@ -5,11 +5,11 @@ import { api } from './services/api'
 import Dashboard from './components/Dashboard'
 
 function App() {
-  const store = useRobotStore()
-
   useEffect(() => {
     // Initialize SSE connection
     initSSE()
+
+    const { setMode, setSensors, setVision, setFacts, setDrives } = useRobotStore.getState()
 
     // Fetch initial state
     const fetchInitialState = async () => {
@@ -21,11 +21,11 @@ function App() {
           api.getMemory(),
         ])
 
-        store.setMode(state.mode || 'companion_day')
-        store.setSensors(sensors)
-        store.setVision(vision)
-        store.setFacts(memory.facts || [])
-        store.setDrives(state.drives || {})
+        setMode(state.mode || 'companion_day')
+        setSensors(sensors)
+        setVision(vision)
+        setFacts(memory.facts || [])
+        setDrives(state.drives || {})
       } catch (err) {
         console.error('Failed to fetch initial state:', err)
       }
@@ -37,8 +37,9 @@ function App() {
     const stateInterval = setInterval(async () => {
       try {
         const state = await api.getState()
-        store.setMode(state.mode || 'companion_day')
-        store.setDrives(state.drives || {})
+        const s = useRobotStore.getState()
+        s.setMode(state.mode || 'companion_day')
+        s.setDrives(state.drives || {})
       } catch (err) {
         console.error('State poll error:', err)
       }
@@ -48,7 +49,7 @@ function App() {
     const memoryInterval = setInterval(async () => {
       try {
         const memory = await api.getMemory()
-        store.setFacts(memory.facts || [])
+        useRobotStore.getState().setFacts(memory.facts || [])
       } catch (err) {
         console.error('Memory poll error:', err)
       }
@@ -58,7 +59,7 @@ function App() {
       clearInterval(stateInterval)
       clearInterval(memoryInterval)
     }
-  }, [store])
+  }, [])
 
   return <Dashboard />
 }

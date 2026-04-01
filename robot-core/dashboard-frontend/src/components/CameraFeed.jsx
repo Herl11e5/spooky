@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useRobotStore } from '../store/robotStore'
-import { Video, AlertCircle } from 'lucide-react'
+import { Video } from 'lucide-react'
 
 export default function CameraFeed() {
   const imgRef = useRef(null)
@@ -8,17 +8,8 @@ export default function CameraFeed() {
 
   useEffect(() => {
     if (!imgRef.current) return
-
-    // Load MJPEG stream
-    const img = imgRef.current
-    img.src = '/camera?t=' + Date.now()
-
-    // Refresh every 500ms
-    const interval = setInterval(() => {
-      img.src = '/camera?t=' + Date.now()
-    }, 500)
-
-    return () => clearInterval(interval)
+    // MJPEG stream — set src once, the browser handles the continuous stream
+    imgRef.current.src = '/camera'
   }, [])
 
   return (
@@ -29,7 +20,7 @@ export default function CameraFeed() {
           alt="Camera Feed"
           className="w-full h-full object-cover"
           onError={(e) => {
-            e.target.style.display = 'none'
+            setTimeout(() => { e.target.src = '/camera?t=' + Date.now() }, 3000)
           }}
         />
         <Video className="absolute top-4 left-4 text-spooky-neon-cyan opacity-60" />

@@ -90,6 +90,11 @@ class EventType:
     EMOTION_EXPRESSED       = "emotion_expressed"   # {"emotion": str}
     ATTENTION_SOUGHT        = "attention_sought"    # {"intensity": int (1–3)}
 
+    # Physical interactions
+    PICKED_UP               = "picked_up"           # robot lifted off surface
+    PUT_DOWN                = "put_down"            # robot placed back on surface
+    STARTLED                = "startled"            # sudden unexpected stimulus
+
     # System
     HEARTBEAT               = "heartbeat"
     SHUTDOWN_REQUEST        = "shutdown_request"

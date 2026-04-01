@@ -117,6 +117,110 @@ _SEQUENCES: Dict[str, List[Step]] = {
         ("turn_right", {"speed": 30},  0.5),
         ("stop",       {},             0.2),
     ],
+
+    # ── Vector-like micro-behaviors ───────────────────────────────────────────
+
+    "startle": [
+        ("look_at",   {"pan":  0, "tilt":  20},  0.08),
+        ("look_at",   {"pan":  0, "tilt":  -5},  0.12),
+        ("look_at",   {"pan": 15, "tilt":  10},  0.15),
+        ("look_at",   {"pan":  0, "tilt":   0},  0.25),
+    ],
+
+    "head_tilt_right": [
+        ("look_at",   {"pan":  20, "tilt": -8},  0.35),
+        (None,        {},                         0.50),
+        ("look_at",   {"pan":   0, "tilt":  0},  0.30),
+    ],
+
+    "head_tilt_left": [
+        ("look_at",   {"pan": -20, "tilt": -8},  0.35),
+        (None,        {},                         0.50),
+        ("look_at",   {"pan":   0, "tilt":  0},  0.30),
+    ],
+
+    "fidget": [
+        ("look_at",   {"pan":  8, "tilt":  3},  0.20),
+        ("look_at",   {"pan": -5, "tilt": -2},  0.18),
+        ("look_at",   {"pan":  3, "tilt":  5},  0.20),
+        ("look_at",   {"pan":  0, "tilt":  0},  0.22),
+    ],
+
+    "sniff": [
+        ("look_at",   {"pan":  0, "tilt": -25},  0.40),
+        ("look_at",   {"pan": 10, "tilt": -20},  0.25),
+        ("look_at",   {"pan":-10, "tilt": -20},  0.25),
+        ("look_at",   {"pan":  0, "tilt":   0},  0.30),
+    ],
+
+    "peek_right": [
+        ("look_at",   {"pan":  60, "tilt":  0},  0.50),
+        (None,        {},                         0.60),
+        ("look_at",   {"pan":   0, "tilt":  0},  0.30),
+    ],
+
+    "peek_left": [
+        ("look_at",   {"pan": -60, "tilt":  0},  0.50),
+        (None,        {},                         0.60),
+        ("look_at",   {"pan":   0, "tilt":  0},  0.30),
+    ],
+
+    "double_take": [
+        ("look_at",   {"pan":  40, "tilt":  0},  0.25),
+        ("look_at",   {"pan":   0, "tilt":  0},  0.15),
+        ("look_at",   {"pan":  40, "tilt":  5},  0.40),
+        (None,        {},                         0.30),
+        ("look_at",   {"pan":   0, "tilt":  0},  0.25),
+    ],
+
+    "investigate": [
+        ("look_at",   {"pan":  0, "tilt": -15},  0.40),
+        ("look_at",   {"pan": 10, "tilt": -10},  0.30),
+        ("look_at",   {"pan":-10, "tilt": -10},  0.30),
+        ("look_at",   {"pan":  0, "tilt":  10},  0.25),
+        ("look_at",   {"pan":  0, "tilt":   0},  0.25),
+    ],
+
+    "celebratory": [
+        ("turn_right", {"speed": 50},  0.35),
+        ("stop",       {},             0.10),
+        ("turn_left",  {"speed": 50},  0.70),
+        ("stop",       {},             0.10),
+        ("turn_right", {"speed": 50},  0.35),
+        ("stop",       {},             0.10),
+        ("look_at",    {"pan": 0, "tilt": 10},  0.20),
+        ("look_at",    {"pan": 0, "tilt":  0},  0.15),
+    ],
+
+    "picked_up_react": [
+        ("look_at",   {"pan":  0, "tilt":  25},  0.12),
+        ("look_at",   {"pan": 30, "tilt":  10},  0.18),
+        ("look_at",   {"pan":-30, "tilt":  10},  0.18),
+        ("look_at",   {"pan":  0, "tilt":   0},  0.30),
+    ],
+
+    "put_down_react": [
+        ("look_at",   {"pan":  0, "tilt": -10},  0.20),
+        ("look_at",   {"pan": 20, "tilt":   0},  0.25),
+        ("look_at",   {"pan":-20, "tilt":   0},  0.25),
+        ("look_at",   {"pan":  0, "tilt":   0},  0.30),
+    ],
+
+    "bored_sigh": [
+        ("look_at",   {"pan":  0, "tilt": -10},  0.60),
+        (None,        {},                         0.80),
+        ("look_at",   {"pan": 30, "tilt":   0},  0.50),
+        (None,        {},                         0.40),
+        ("look_at",   {"pan":  0, "tilt":   0},  0.40),
+    ],
+
+    "wake_up_stretch": [
+        ("look_at",   {"pan":  0, "tilt": -20},  0.30),
+        ("look_at",   {"pan":  0, "tilt":  15},  0.60),
+        ("look_at",   {"pan":-30, "tilt":   5},  0.35),
+        ("look_at",   {"pan": 30, "tilt":   5},  0.35),
+        ("look_at",   {"pan":  0, "tilt":   0},  0.25),
+    ],
 }
 
 

@@ -53,6 +53,7 @@ class Mood(Enum):
     TIRED = "tired"
     BORED = "bored"
     CONTENT = "content"
+    SURPRISED = "surprised"
 
 
 @dataclass
@@ -104,13 +105,19 @@ class PersonalityService:
         self._last_play_time = 0.0
         self._danger_detected = False
         self._active_time = 0.0  # Track how long robot has been active
+        self._last_published_mood: Optional[Mood] = None
 
-        bus.subscribe(EventType.PERSON_DETECTED, self._on_person)
+        bus.subscribe(EventType.PERSON_DETECTED,  self._on_person)
         bus.subscribe(EventType.PERSON_IDENTIFIED, self._on_person_identified)
-        bus.subscribe(EventType.SCENE_ANALYZED, self._on_novelty)
-        bus.subscribe(EventType.MOTION_DETECTED, self._on_novelty)
-        bus.subscribe(EventType.SAFETY_FAULT, self._on_danger)
-        bus.subscribe(EventType.COMMAND_PARSED, self._on_interaction)
+        bus.subscribe(EventType.SCENE_ANALYZED,   self._on_novelty)
+        bus.subscribe(EventType.MOTION_DETECTED,  self._on_novelty)
+        bus.subscribe(EventType.SAFETY_FAULT,     self._on_danger)
+        bus.subscribe(EventType.COMMAND_PARSED,   self._on_interaction)
+        bus.subscribe(EventType.UNUSUAL_SOUND,    self._on_startle)
+        try:
+            bus.subscribe(EventType.PICKED_UP, self._on_picked_up)
+        except Exception:
+            pass  # event type may not exist yet
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
@@ -202,30 +209,45 @@ class PersonalityService:
             self._raise_mood(Mood.HAPPY, 0.2)
             self._lower_mood(Mood.BORED, 0.3)
             self._last_interaction_time = time.time()
+        self._maybe_publish_mood()
 
     def _on_person_identified(self, event_data: Dict) -> None:
         with self._lock:
-            # Recognized person = extra happiness!
             self._raise_mood(Mood.HAPPY, 0.25)
             if "confidence" in event_data and event_data["confidence"] > 0.8:
-                # High confidence recognition = extra joy
                 self._raise_mood(Mood.PLAYFUL, 0.15)
+        self._maybe_publish_mood()
 
     def _on_novelty(self, event_data: Dict) -> None:
         with self._lock:
             self._raise_mood(Mood.CURIOUS, 0.18)
             self._last_novelty_time = time.time()
+        self._maybe_publish_mood()
 
     def _on_danger(self, event_data: Dict) -> None:
         with self._lock:
             self._raise_mood(Mood.WARY, 0.3)
             self._lower_mood(Mood.PLAYFUL, 0.4)
             self._danger_detected = True
+        self._maybe_publish_mood()
 
     def _on_interaction(self, event_data: Dict) -> None:
         with self._lock:
             self._raise_mood(Mood.HAPPY, 0.2)
             self._active_time += 1.0
+        self._maybe_publish_mood()
+
+    def _on_startle(self, event_data: Dict) -> None:
+        with self._lock:
+            self._raise_mood(Mood.SURPRISED, 0.6)
+            self._lower_mood(Mood.BORED, 0.5)
+        self._maybe_publish_mood()
+
+    def _on_picked_up(self, event_data: Dict) -> None:
+        with self._lock:
+            self._raise_mood(Mood.SURPRISED, 0.8)
+            self._lower_mood(Mood.BORED, 0.8)
+        self._maybe_publish_mood()
 
     # ── mood manipulation ─────────────────────────────────────────────────────
 
@@ -246,6 +268,18 @@ class PersonalityService:
             scale = 1.0 / total
             for m in self._mood_intensities:
                 self._mood_intensities[m] *= scale
+
+    def _maybe_publish_mood(self) -> None:
+        """Publish PERSONALITY_MOOD_CHANGED if dominant mood has changed."""
+        dominant = self.current_mood
+        intensity = self.get_mood_intensity(dominant)
+        if dominant != self._last_published_mood and intensity > 0.2:
+            self._last_published_mood = dominant
+            self._bus.publish(
+                EventType.PERSONALITY_MOOD_CHANGED,
+                {"mood": dominant, "intensity": intensity},
+                source="personality",
+            )
 
     # ── mood tick loop (runs every ~1 second) ─────────────────────────────────
 
@@ -281,8 +315,15 @@ class PersonalityService:
                     if self._mm.current == Mode.IDLE_OBSERVER:
                         self._lower_mood(Mood.TIRED, 0.01)
 
+                    # SURPRISED decays much faster (it's a fleeting emotion)
+                    self._mood_intensities[Mood.SURPRISED] = max(
+                        0.0, self._mood_intensities[Mood.SURPRISED] - 0.05
+                    )
+
                     # Normalize so sum doesn't explode
                     self._normalize_moods()
+
+                self._maybe_publish_mood()
 
             except Exception as e:
                 log.error(f"Error in mood tick: {e}")

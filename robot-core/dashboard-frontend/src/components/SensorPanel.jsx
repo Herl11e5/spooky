@@ -1,15 +1,18 @@
 import { useRobotStore } from '../store/robotStore'
 import { Gauge, Thermometer, HardDrive } from 'lucide-react'
 
-function SensorGauge({ label, value, max, icon: Icon, unit, warning, danger }) {
+function SensorGauge({ label, value, max, icon: Icon, unit, warning, danger, invert = false }) {
   const percentage = (value / max) * 100
   let color = 'text-spooky-neon-green'
   let bgColor = 'bg-spooky-neon-green'
 
-  if (danger && value > danger) {
+  const isDanger = invert ? (danger && value < danger) : (danger && value > danger)
+  const isWarning = invert ? (warning && value < warning) : (warning && value > warning)
+
+  if (isDanger) {
     color = 'text-spooky-neon-red'
     bgColor = 'bg-spooky-neon-red'
-  } else if (warning && value > warning) {
+  } else if (isWarning) {
     color = 'text-spooky-neon-yellow'
     bgColor = 'bg-spooky-neon-yellow'
   }
@@ -66,13 +69,14 @@ export default function SensorPanel() {
       />
 
       <SensorGauge
-        label="RAM"
+        label="RAM libera"
         value={ramUsage}
         max={2000}
         icon={HardDrive}
         unit=" MB"
-        warning={1200}
-        danger={1800}
+        warning={400}
+        danger={200}
+        invert
       />
 
       {/* Pitch & Roll */}
