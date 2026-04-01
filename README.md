@@ -1,47 +1,110 @@
-# Spooky — Robot Companion da Scrivania
+# 🕷️ Spooky — Robot Autonomo su Raspberry Pi 5
 
-Robot autonomo basato su **SunFounder PiCrawler + Raspberry Pi 5 (8 GB)**.
-Completamente locale: nessun cloud, nessuna telemetria, tutti i dati restano sul dispositivo.
-
----
-
-## Hardware richiesto
-
-| Componente | Dettaglio |
-|---|---|
-| Raspberry Pi 5 | 8 GB RAM (consigliato) |
-| SunFounder PiCrawler | Kit completo (chassis, 12 servos, scheda robot-hat) |
-| Camera | Pi Camera Module 3 o compatibile libcamera |
-| Microfono | USB o I2S |
-| Altoparlante | USB o I2S (es. HiFiBerry MiniAmp) |
-| Alimentazione | Ufficiale RPi 27W USB-C |
+Visione intelligente (Moondream) + Ragionamento (Llama3.2:3b). Completamente locale, nessun cloud.
 
 ---
 
-## Installazione (RPi)
+## 🚀 Installazione (Uno-Shot)
 
 ```bash
-# 1. Clona il repo
 git clone https://github.com/Herl11e5/spooky.git ~/spooky
-
-# 2. Setup completo automatico
-#    (Python 3.11, dipendenze, ollama, vosk, systemd service)
-bash ~/spooky/robot-core/scripts/install_rpi.sh
-
-# 3. Configura parametri locali (Telegram, HA, override LLM, ecc.)
-nano ~/spooky/robot-core/config/local.yaml
-
-# 4a. Avvio manuale (per test)
-bash ~/spooky/robot-core/scripts/start.sh
-
-# 4b. Avvio automatico al boot
+cd ~/spooky
+bash robot-core/scripts/install_rpi.sh
 sudo systemctl start spooky
-sudo journalctl -u spooky -f
-
-# Dashboard → http://<ip-rpi>:5000
+sudo systemctl enable spooky
 ```
 
-`install_rpi.sh` scarica automaticamente: vosk-model-small-it-0.22 (~50 MB) e llama3.2:1b (~700 MB).
+**Fine.** Spooky è attivo e riparte al riavvio.
+
+---
+
+## 📊 Cosa Fa
+
+```
+📷 Moondream (3.5 GB)  →  🧠 Llama3.2:3b (2 GB)  →  🗣️ Audio
+ Vede oggetti            Ragiona/Decide           Comunica
+```
+
+Fotogramma camera → "Vedo una persona" → "Salve!" → parla.
+
+---
+
+## 🔧 Comandi
+
+```bash
+# Monitora in tempo reale
+sudo journalctl -u spooky -f
+
+# Restart
+sudo systemctl restart spooky
+
+# Stop
+sudo systemctl stop spooky
+
+# Diagnostica
+python robot-core/scripts/diagnose_system.py
+
+# Iscrivi volto
+python robot-core/scripts/enroll_face.py
+
+# Debug
+sudo systemctl stop spooky
+cd robot-core && python main.py --debug
+```
+
+---
+
+## ⚙️ Configurazione
+
+Edita `robot-core/config/local.yaml` per override:
+
+```yaml
+robot:
+  name: "Spooky-RPi"
+
+vision_llm:
+  scene_interval_s: 120      # Analyza ogni 2 min
+  object_interval_s: 150
+  keep_alive_s: 0            # Unload subito (libera RAM)
+
+llm:
+  keep_alive_s: 0            # Unload quando idle
+```
+
+---
+
+## 🆘 Problemi
+
+Vedi **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** per:
+- Moondream non riconosce oggetti
+- Ollama offline
+- Camera non funziona
+- GPIO errori
+
+---
+
+## 📚 Ulteriore Info
+
+- `robot-core/architecture.md` — Architettura interna
+- `robot-core/config/robot.yaml` — Configurazione completa
+- `robot-core/services/` — Core services (vision, mind, motor, audio, etc.)
+
+---
+
+**Hardware richiesto:** Raspberry Pi 5 (8 GB RAM)
+
+---
+
+## 📋 Hardware (RPi)
+
+| Componente | Note |
+|---|---|
+| Raspberry Pi 5 | 8 GB RAM (minimo 4 GB) |
+| SunFounder PiCrawler | Chassis + 12 servos + robot-hat |
+| Camera | Pi Camera Module 3 |
+| Microfono | USB o I2S |
+| Altoparlante | USB o I2S |
+| Alimentazione | Ufficiale 27W USB-C |
 
 ---
 
