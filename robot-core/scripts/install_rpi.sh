@@ -41,10 +41,22 @@ fi
 
 # ── 1. Sistema operativo ──────────────────────────────────────────────────────
 step "Verifica sistema"
-if ! grep -q "Bookworm\|bookworm" /etc/os-release 2>/dev/null; then
+OS_ID=$(. /etc/os-release && echo "$ID" 2>/dev/null || echo "unknown")
+OS_VERSION=$(. /etc/os-release && echo "$VERSION_ID" 2>/dev/null || echo "unknown")
+OS_PRETTY=$(. /etc/os-release && echo "$PRETTY_NAME")
+
+# Rileva Debian/RPi OS version
+IS_BOOKWORM=false
+IS_TRIXIE=false
+[ "$OS_VERSION" = "12" ] || grep -q "Bookworm" /etc/os-release 2>/dev/null && IS_BOOKWORM=true
+[ "$OS_VERSION" = "13" ] || grep -q "trixie" /etc/os-release 2>/dev/null && IS_TRIXIE=true
+
+if [ "$IS_TRIXIE" = true ]; then
+    warn "Debian trixie (testing) rilevato — alcuni pacchetti apt potrebbero non essere disponibili"
+elif [ "$IS_BOOKWORM" != true ]; then
     warn "Non sembra RPi OS Bookworm — proseguo comunque"
 fi
-ok "OS: $(. /etc/os-release && echo "$PRETTY_NAME")"
+ok "OS: $OS_PRETTY"
 ok "Arch: $(uname -m)"
 
 # ── 2. Python 3.11+ ──────────────────────────────────────────────────────────
@@ -76,23 +88,42 @@ sudo apt-get install -y "python${PYVER}-venv" "python${PYVER}-full" 2>&1 | tee -
 
 # ── 3. Pacchetti apt ──────────────────────────────────────────────────────────
 step "Pacchetti apt"
+
+# Base packages (sempre disponibili)
 APT_PKGS=(
     git curl unzip wget
     python3-pip python3-setuptools python3-wheel
-    python3-smbus python3-gpiod
+    python3-smbus
     espeak-ng
     alsa-utils pulseaudio-utils
-    libatlas-base-dev libopenblas-dev
+    libopenblas-dev
     libopenjp2-7 libwebp-dev
     ffmpeg
     python3-picamera2 python3-libcamera
     portaudio19-dev libsndfile1
-    libgpiod2
     i2c-tools
     libi2c-dev
 )
+
+# Optional packages (version-specific)
+OPT_PKGS=()
+if [ "$IS_BOOKWORM" = true ]; then
+    # Bookworm ha questi pacchetti
+    OPT_PKGS+=(python3-gpiod libgpiod2)
+elif [ "$IS_TRIXIE" = true ]; then
+    # trixie non ha python3-gpiod / libgpiod2 (obsoleti)
+    warn "su Debian trixie: python3-gpiod e libgpiod2 non disponibili (robot-hat ha GPIO proprio)"
+else
+    # tenta comunque
+    OPT_PKGS+=(python3-gpiod libgpiod2)
+fi
+
+# libatlas-base-dev è obsoleto → use libopenblas-dev (già in lista)
+
+APT_ALL=("${APT_PKGS[@]}" "${OPT_PKGS[@]}")
+
 sudo apt-get update -qq 2>&1 | tail -3 | tee -a "$LOG"
-for pkg in "${APT_PKGS[@]}"; do
+for pkg in "${APT_ALL[@]}"; do
     if dpkg -s "$pkg" &>/dev/null; then
         log "  ✅ $pkg (già installato)"
     else
@@ -487,6 +518,9 @@ if [ ${#FAILED_PKGS[@]} -eq 0 ] && [ ${#WARNINGS[@]} -eq 0 ]; then
     echo " ✅  Installazione completata senza errori!"
 else
     echo " ⚠️   Installazione completata con avvisi:"
+    if [ "$IS_TRIXIE" = true ]; then
+        echo "     • Debian trixie (testing) — alcuni pacchetti apt non disponibili (ATTESO)"
+    fi
     for w in "${WARNINGS[@]}"; do echo "     • $w"; done
     for p in "${FAILED_PKGS[@]}"; do echo "     • pip: $p non installato"; done
 fi
@@ -495,6 +529,13 @@ echo
 echo "   Modelli ollama installati:"
 ollama list 2>/dev/null | tail -n +2 | while IFS= read -r l; do echo "     $l"; done \
     || echo "     (ollama non disponibile)"
+
+echo
+echo "   OS Rilevato: $OS_PRETTY"
+if [ "$IS_TRIXIE" = true ]; then
+    echo "   ℹ️  Debian trixie — alcuni errori apt sono attesi e non bloccanti"
+fi
+
 echo
 echo "   ⚠️  REBOOT NECESSARIO per:"
 echo "       - I2S audio (HifiBerry DAC)"
