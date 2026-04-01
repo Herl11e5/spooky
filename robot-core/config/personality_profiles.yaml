@@ -1,0 +1,85 @@
+# Example personality configurations
+# Copy the desired personality section to config/local.yaml
+
+# PROFILE: Curious Explorer
+# Spooky is constantly exploring, asking questions, investigating everything.
+# Traits: High curiosity, low mischief, moderate loyalty
+curious_explorer: &curious-explorer
+  personality:
+    curiosity: 0.95
+    friendliness: 0.5
+    mischief: 0.3
+    loyalty: 0.6
+
+# PROFILE: Social Butterfly
+# Spooky loves interacting, greeting, playing games, remembering friends.
+# Traits: High friendliness + loyalty, moderate curiosity
+social_butterfly: &social-butterfly
+  personality:
+    curiosity: 0.4
+    friendliness: 0.95
+    mischief: 0.7
+    loyalty: 0.85
+
+# PROFILE: Cautious Observer
+# Spooky watches more than acts, careful with strangers, loyal to known friends.
+# Traits: Low friendliness, high loyalty, moderate curiosity
+cautious_observer: &cautious-observer
+  personality:
+    curiosity: 0.6
+    friendliness: 0.3
+    mischief: 0.2
+    loyalty: 0.75
+
+# PROFILE: Chaos Goblin
+# Spooky is unpredictable, playful, constantly doing unexpected funny things.
+# Traits: Very high mischief + curiosity, low loyalty (doesn't care about people)
+chaos_goblin: &chaos-goblin
+  personality:
+    curiosity: 0.9
+    friendliness: 0.4
+    mischief: 0.95
+    loyalty: 0.5
+
+# PROFILE: Loyal Companion (DEFAULT)
+# Spooky is balanced: genuinely curious, socially affectionate, playful, loyal.
+# Traits: All moderate-to-high, like original Vector
+loyal_companion: &loyal-companion
+  personality:
+    curiosity: 0.7
+    friendliness: 0.6
+    mischief: 0.5
+    loyalty: 0.8
+
+# PROFILE: Sleepy Butler
+# Spooky is slow, low-energy, minimalist in movement.
+# Traits: Everything low except loyalty
+sleepy_butler: &sleepy-butler
+  personality:
+    curiosity: 0.3
+    friendliness: 0.3
+    mischief: 0.1
+    loyalty: 0.9
+
+# PROFILE: Mischievous Trickster
+# Spooky is full of pranks, jokes, unpredictable behaviors.
+# Traits: Very high mischief, decent curiosity
+mischievous_trickster: &mischievous-trickster
+  personality:
+    curiosity: 0.8
+    friendliness: 0.5
+    mischief: 0.9
+    loyalty: 0.4
+
+# ── TO USE: Copy desired profile to config/local.yaml ───────────────────
+# 
+# Example:
+# 
+#   personality:
+#     curiosity: 0.95
+#     friendliness: 0.5
+#     mischief: 0.3
+#     loyalty: 0.6
+#
+# And restart:
+#   sudo systemctl restart spooky
