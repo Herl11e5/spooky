@@ -85,6 +85,11 @@ class EventType:
     # LLM thought stream
     LLM_CALL                = "llm_call"             # {"trigger","prompt","reply","time_ms","fallback","model"}
 
+    # Personality & emotion
+    PERSONALITY_MOOD_CHANGED = "personality_mood_changed"  # {"mood": Mood, "intensity": float}
+    EMOTION_EXPRESSED       = "emotion_expressed"   # {"emotion": str}
+    ATTENTION_SOUGHT        = "attention_sought"    # {"intensity": int (1–3)}
+
     # System
     HEARTBEAT               = "heartbeat"
     SHUTDOWN_REQUEST        = "shutdown_request"

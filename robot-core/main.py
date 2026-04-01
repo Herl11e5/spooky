@@ -47,9 +47,15 @@ from services.alert_adapters import build_adapters
 from services.learning       import LearningService
 from services.experiment     import ExperimentEngine
 from services.summarizer     import Summarizer, set_ollama_lock as set_summarizer_lock
+from services.personality    import PersonalityService, PersonalityTraits
+from services.emotion        import EmotionService
+from services.social_memory  import SocialMemory
 from skills.track_face      import TrackFaceSkill
 from skills.idle_behavior   import IdleBehaviorSkill
 from skills.patrol          import PatrolSkill
+from skills.play_skill      import PlaySkill
+from skills.seek_attention_skill import SeekAttentionSkill
+from skills.explore_skill   import ExploreSkill
 
 log = logging.getLogger("main")
 
@@ -171,6 +177,24 @@ class RobotRuntime:
         # ── Conscience (internal drives) ──────────────────────────────────────────
         self._conscience = Conscience(self._bus, self._modes)
 
+        # ── Personality (traits & mood system) ────────────────────────────────────
+        # Load personality traits from config or use defaults
+        pers_cfg = cfg.get("personality", {})
+        personality_traits = PersonalityTraits(
+            curiosity=pers_cfg.get("curiosity", 0.7),
+            friendliness=pers_cfg.get("friendliness", 0.6),
+            mischief=pers_cfg.get("mischief", 0.5),
+            loyalty=pers_cfg.get("loyalty", 0.8),
+        )
+        self._personality = PersonalityService(self._bus, self._modes, traits=personality_traits)
+
+        # ── Emotion expression (movement + voice from mood) ───────────────────────
+        self._emotion = EmotionService(self._bus)
+        self._emotion.set_services(self._motor, self._audio)
+
+        # ── Social memory (track relationships) ────────────────────────────────────
+        self._social_memory = SocialMemory(self._bus, self._memory)
+
         # ── Skills ────────────────────────────────────────────────────────────────
         self._skill_track = TrackFaceSkill(
             self._bus, self._modes, self._safety, self._motor, self._memory
@@ -180,6 +204,15 @@ class RobotRuntime:
         )
         self._skill_patrol = PatrolSkill(
             self._bus, self._modes, self._safety, self._motor, self._choreo, self._conscience
+        )
+        self._skill_play = PlaySkill(
+            self._bus, self._modes, self._safety, self._motor, self._audio, self._choreo
+        )
+        self._skill_seek_attention = SeekAttentionSkill(
+            self._bus, self._modes, self._safety, self._motor, self._audio
+        )
+        self._skill_explore = ExploreSkill(
+            self._bus, self._modes, self._safety, self._motor, self._audio
         )
 
         # ── Dashboard command queue ───────────────────────────────────────────────
@@ -247,6 +280,9 @@ class RobotRuntime:
         self._audio.start()
         self._vision.start()
         self._conscience.start()
+        self._personality.start()
+        self._emotion.start()
+        self._social_memory.start()
         self._mind.start()
         self._learning.apply_behavior_preferences()
         self._summarizer.start()
@@ -274,10 +310,16 @@ class RobotRuntime:
         self._skill_track.stop()
         self._skill_idle.stop()
         self._skill_patrol.stop()
+        self._skill_play.stop()
+        self._skill_seek_attention.stop()
+        self._skill_explore.stop()
         self._choreo.stop()
         self._experiments.stop()
         self._summarizer.stop()
         self._night_watch.stop()
+        self._emotion.stop()
+        self._personality.stop()
+        self._social_memory.stop()
         self._conscience.stop()
         self._mind.stop()
         self._audio.stop()

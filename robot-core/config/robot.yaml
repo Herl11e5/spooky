@@ -103,6 +103,14 @@ modes:
   night_watch_start: "23:00"
   night_watch_end:   "07:00"
 
+# ── Personality Traits ────────────────────────────────────────────────────────
+# Customize what kind of robot Spooky is (0.0–1.0 scale)
+personality:
+  curiosity: 0.7        # How much does Spooky want to explore?
+  friendliness: 0.6     # How enthusiastic is greeting?
+  mischief: 0.5         # How playful and unpredictable?
+  loyalty: 0.8          # How attached to people?
+
 # ── Night watch ───────────────────────────────────────────────────────────────
 night_watch:
   silent_alerts: true         # no TTS; only log + external adapter
