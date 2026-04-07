@@ -1,41 +1,36 @@
 import { useRobotStore } from '../store/robotStore'
-import { Activity } from 'lucide-react'
 
 export default function LogPanel() {
   const { logs } = useRobotStore()
 
-  return (
-    <div className="border-2 border-spooky-neon-yellow rounded-lg p-4 bg-black/30 max-h-96 overflow-y-auto">
-      <h3 className="text-lg font-bold text-spooky-neon-yellow flex items-center gap-2 mb-3 sticky top-0 bg-black/50 pb-2">
-        <Activity className="w-5 h-5" />
-        System Log
-        <span className="ml-auto text-sm text-spooky-neon-cyan/50">
-          ({logs.length})
-        </span>
-      </h3>
+  const color = (log) => {
+    if (log.toLowerCase().includes('error') || log.includes('[ALERT')) return '#ef4444'
+    if (log.toLowerCase().includes('warn'))  return '#eab308'
+    if (log.includes('[person'))             return '#22c55e'
+    if (log.includes('[tts'))                return '#a855f7'
+    return '#94a3b8'
+  }
 
-      {logs.length === 0 ? (
-        <p className="text-spooky-neon-cyan/50 text-sm text-center py-4">
-          No logs
-        </p>
-      ) : (
-        <div className="space-y-1">
-          {logs.slice(0, 50).map((log, idx) => (
-            <div
-              key={idx}
-              className={`text-xs font-mono p-1 truncate ${
-                log.includes('error')
-                  ? 'text-spooky-neon-red'
-                  : log.includes('warn')
-                  ? 'text-spooky-neon-yellow'
-                  : 'text-spooky-neon-cyan/70'
-              }`}
-            >
-              {log}
-            </div>
-          ))}
-        </div>
-      )}
+  return (
+    <div className="card flex flex-col" style={{ height: 340 }}>
+      <p className="card-title">📋 Log sistema
+        <span className="ml-auto text-xs font-mono" style={{ color: 'var(--color-muted)' }}>
+          {logs.length}
+        </span>
+      </p>
+
+      <div className="flex-1 overflow-y-auto space-y-0.5 pr-1">
+        {logs.length === 0 ? (
+          <p className="text-sm text-center py-6" style={{ color: 'var(--color-muted)' }}>
+            Nessun log
+          </p>
+        ) : logs.slice(0, 60).map((log, i) => (
+          <div key={i} className="text-xs font-mono px-2 py-0.5 rounded truncate"
+               style={{ color: color(log), background: i % 2 === 0 ? '#0a1120' : 'transparent' }}>
+            {log}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

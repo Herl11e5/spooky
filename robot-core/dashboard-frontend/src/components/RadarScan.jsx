@@ -1,6 +1,5 @@
 import { useRef, useEffect, useState } from 'react'
 import { api } from '../services/api'
-import { Radar } from 'lucide-react'
 
 export default function RadarScan() {
   const canvasRef = useRef(null)
@@ -8,106 +7,73 @@ export default function RadarScan() {
   const [scanning, setScanning] = useState(false)
 
   useEffect(() => {
-    // Fetch initial scan
-    api.getScan().then(data => {
-      if (data.readings) setReadings(data.readings)
-    })
+    api.getScan().then(d => { if (d.readings) setReadings(d.readings) })
   }, [])
 
-  const handleStartScan = async () => {
-    setScanning(true)
-    try {
-      await api.startScan()
-    } catch (err) {
-      console.error('Scan error:', err)
-    } finally {
-      setScanning(false)
-    }
-  }
-
   useEffect(() => {
-    if (!canvasRef.current || !readings.length) return
-
     const canvas = canvasRef.current
+    if (!canvas) return
     const ctx = canvas.getContext('2d')
-    const centerX = canvas.width / 2
-    const centerY = canvas.height / 2
-    const maxR = 80
+    const cx = canvas.width / 2
+    const cy = canvas.height / 2
+    const maxR = canvas.width / 2 - 8
 
-    // Clear
-    ctx.fillStyle = '#0d0d0d'
+    ctx.fillStyle = '#0f172a'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    // Grid circles
-    ctx.strokeStyle = '#39ff1422'
+    // Grid
+    ctx.strokeStyle = '#1e293b'
     ctx.lineWidth = 1
-    for (let r = 25; r <= maxR; r += 25) {
-      ctx.beginPath()
-      ctx.arc(centerX, centerY, r, 0, Math.PI * 2)
-      ctx.stroke()
+    for (let r = maxR / 3; r <= maxR; r += maxR / 3) {
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke()
     }
-
-    // Radial lines
-    ctx.strokeStyle = '#39ff1411'
-    for (let a = 0; a < 360; a += 30) {
+    for (let a = 0; a < 360; a += 45) {
       const rad = (a * Math.PI) / 180
-      const x = centerX + Math.cos(rad) * maxR
-      const y = centerY + Math.sin(rad) * maxR
       ctx.beginPath()
-      ctx.moveTo(centerX, centerY)
-      ctx.lineTo(x, y)
+      ctx.moveTo(cx, cy)
+      ctx.lineTo(cx + Math.cos(rad) * maxR, cy + Math.sin(rad) * maxR)
       ctx.stroke()
     }
 
-    // Draw readings
+    if (!readings.length) {
+      ctx.fillStyle = '#334155'
+      ctx.font = '11px monospace'
+      ctx.textAlign = 'center'
+      ctx.fillText('Nessun dato', cx, cy + 4)
+      return
+    }
+
     const n = readings.length
-    const stepDeg = 360 / n
     readings.forEach((r, i) => {
       const dist = Math.min(r.dist >= 990 ? 200 : r.dist, 200)
-      const frac = dist / 200
-      const pr = frac * maxR
-      const angle = (i * stepDeg - 90) * (Math.PI / 180)
-
-      const x = centerX + Math.cos(angle) * pr
-      const y = centerY + Math.sin(angle) * pr
-
-      // Color based on distance
-      const color = dist < 30 ? '#ff4444' : dist < 80 ? '#ffd60a' : '#2ecc71'
-
-      // Point
-      ctx.fillStyle = color
-      ctx.beginPath()
-      ctx.arc(x, y, 3, 0, Math.PI * 2)
-      ctx.fill()
+      const pr = (dist / 200) * maxR
+      const angle = ((i / n) * 360 - 90) * (Math.PI / 180)
+      const x = cx + Math.cos(angle) * pr
+      const y = cy + Math.sin(angle) * pr
+      const col = dist < 30 ? '#ef4444' : dist < 80 ? '#eab308' : '#22c55e'
+      ctx.fillStyle = col
+      ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill()
     })
 
     // Robot center
-    ctx.fillStyle = '#39ff14'
-    ctx.beginPath()
-    ctx.arc(centerX, centerY, 4, 0, Math.PI * 2)
-    ctx.fill()
+    ctx.fillStyle = '#22c55e'
+    ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI * 2); ctx.fill()
   }, [readings])
 
+  const startScan = async () => {
+    setScanning(true)
+    try { await api.startScan() } catch (e) { console.error(e) }
+    finally { setScanning(false) }
+  }
+
   return (
-    <div className="border-2 border-spooky-neon-green rounded-lg p-4 bg-black/30">
-      <h3 className="text-lg font-bold text-spooky-neon-green flex items-center gap-2 mb-3">
-        <Radar className="w-5 h-5" />
-        Radar Scan ({readings.length} readings)
-      </h3>
-
-      <canvas
-        ref={canvasRef}
-        width={220}
-        height={220}
-        className="w-full border border-spooky-neon-green/30 rounded mb-3"
-      />
-
-      <button
-        onClick={handleStartScan}
-        disabled={scanning}
-        className="w-full px-3 py-2 bg-spooky-neon-green text-black font-bold rounded hover:opacity-80 disabled:opacity-50"
-      >
-        {scanning ? '🔄 Scanning...' : '📡 Start Scan'}
+    <div className="card">
+      <p className="card-title">📡 Radar ({readings.length} letture)</p>
+      <canvas ref={canvasRef} width={200} height={200}
+              className="w-full rounded-lg mb-3"
+              style={{ border: '1px solid var(--color-border)' }} />
+      <button onClick={startScan} disabled={scanning} className="btn btn-green w-full">
+        {scanning ? '🔄 Scanning…' : '📡 Avvia scansione'}
       </button>
     </div>
   )

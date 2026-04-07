@@ -1,44 +1,43 @@
 import { useRobotStore } from '../store/robotStore'
-import { User } from 'lucide-react'
 
 export default function PersonDetection() {
   const { detectedPerson } = useRobotStore()
 
-  if (!detectedPerson) {
-    return (
-      <div className="border-2 border-spooky-neon-pink rounded-lg p-4 bg-black/30">
-        <h3 className="text-lg font-bold text-spooky-neon-pink flex items-center gap-2 mb-3">
-          <User className="w-5 h-5" />
-          Person Detected
-        </h3>
-        <p className="text-spooky-neon-cyan/50 text-center py-4">
-          No one detected
-        </p>
-      </div>
-    )
-  }
-
   return (
-    <div className="border-2 border-spooky-neon-pink rounded-lg p-4 bg-spooky-neon-pink/10">
-      <h3 className="text-lg font-bold text-spooky-neon-pink flex items-center gap-2 mb-3">
-        <User className="w-5 h-5" />
-        👤 {detectedPerson.name}
-      </h3>
+    <div className="card">
+      <p className="card-title">👤 Rilevamento persona</p>
 
-      <div className="space-y-2">
-        <div className="flex justify-between text-sm">
-          <span className="text-spooky-neon-cyan">Confidence:</span>
-          <span className="text-spooky-neon-green font-mono">
-            {(detectedPerson.confidence * 100).toFixed(0)}%
-          </span>
+      {!detectedPerson ? (
+        <div className="flex items-center gap-2 py-2">
+          <div className="status-dot off" />
+          <span className="text-sm" style={{ color: 'var(--color-muted)' }}>Nessuna persona</span>
         </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-spooky-neon-cyan">Status:</span>
-          <span className={detectedPerson.known ? 'text-spooky-neon-green' : 'text-spooky-neon-yellow'}>
-            {detectedPerson.known ? '✓ Known' : '? Stranger'}
-          </span>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="status-dot on" />
+            <span className="text-base font-bold text-white">{detectedPerson.name}</span>
+            <span className="badge ml-auto"
+                  style={{ background: detectedPerson.known ? '#15803d20' : '#78350f20',
+                           color: detectedPerson.known ? '#4ade80' : '#fbbf24',
+                           border: `1px solid ${detectedPerson.known ? '#22c55e40' : '#f59e0b40'}` }}>
+              {detectedPerson.known ? '✓ Conosciuto' : '? Sconosciuto'}
+            </span>
+          </div>
+          <div>
+            <div className="flex justify-between text-xs mb-1">
+              <span style={{ color: 'var(--color-muted)' }}>Confidenza</span>
+              <span className="font-mono text-white">
+                {(detectedPerson.confidence * 100).toFixed(0)}%
+              </span>
+            </div>
+            <div className="progress-bar">
+              <div className="progress-fill"
+                   style={{ width: `${detectedPerson.confidence * 100}%`, background: '#22c55e' }} />
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

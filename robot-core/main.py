@@ -190,7 +190,7 @@ class RobotRuntime:
 
         # ── Emotion expression (movement + voice from mood) ───────────────────────
         self._emotion = EmotionService(self._bus)
-        self._emotion.set_services(self._motor, self._audio)
+        self._emotion.set_services(self._motor, self._audio, self._choreo)
 
         # ── Social memory (track relationships) ────────────────────────────────────
         self._social_memory = SocialMemory(self._bus, self._memory)

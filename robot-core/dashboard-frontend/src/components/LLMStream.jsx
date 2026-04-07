@@ -1,47 +1,41 @@
 import { useRobotStore } from '../store/robotStore'
-import { Code2 } from 'lucide-react'
 
 export default function LLMStream() {
   const { llmCalls } = useRobotStore()
 
   return (
-    <div className="border-2 border-spooky-neon-cyan rounded-lg p-4 bg-black/30 max-h-96 overflow-y-auto">
-      <h3 className="text-lg font-bold text-spooky-neon-cyan flex items-center gap-2 mb-3 sticky top-0 bg-black/50 pb-2">
-        <Code2 className="w-5 h-5" />
-        LLM Calls
-      </h3>
+    <div className="card flex flex-col" style={{ height: 340 }}>
+      <p className="card-title">🤖 Chiamate LLM
+        <span className="ml-auto text-xs font-mono" style={{ color: 'var(--color-muted)' }}>
+          {llmCalls.length}
+        </span>
+      </p>
 
-      {llmCalls.length === 0 ? (
-        <p className="text-spooky-neon-cyan/50 text-sm text-center py-4">
-          No LLM calls yet
-        </p>
-      ) : (
-        <div className="space-y-2">
-          {llmCalls.slice(0, 15).map((call, idx) => (
-            <div key={idx} className="text-xs bg-black/50 p-2 rounded border-l-2 border-spooky-neon-cyan">
-              <div className="flex justify-between mb-1">
-                <span className="font-bold text-spooky-neon-cyan">
-                  {call.trigger}
-                </span>
-                <span className={call.fallback ? 'text-spooky-neon-red' : 'text-spooky-neon-green'}>
-                  {call.fallback ? 'FALLBACK' : 'LLM'} {call.time_ms}ms
-                </span>
-              </div>
-              {call.prompt && (
-                <div className="text-spooky-neon-yellow/80 mb-1 truncate">
-                  Q: {call.prompt}
-                </div>
-              )}
-              <div className="text-spooky-neon-purple/80 truncate">
-                A: {call.reply || '—'}
-              </div>
-              <div className="text-spooky-neon-cyan/50 text-right mt-1">
-                {call.model}
-              </div>
+      <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+        {llmCalls.length === 0 ? (
+          <p className="text-sm text-center py-6" style={{ color: 'var(--color-muted)' }}>
+            Nessuna chiamata
+          </p>
+        ) : llmCalls.slice(0, 20).map((c, i) => (
+          <div key={i} className="rounded-lg px-3 py-2 text-xs"
+               style={{ background: '#0f172a', border: '1px solid var(--color-border)' }}>
+            <div className="flex justify-between items-center mb-1">
+              <span className="font-semibold text-cyan-400 truncate">{c.trigger || '—'}</span>
+              <span className="font-mono ml-2 flex-shrink-0"
+                    style={{ color: c.fallback ? '#ef4444' : '#22c55e' }}>
+                {c.fallback ? '⚠ FALLBACK' : '✓ LLM'} {c.time_ms}ms
+              </span>
             </div>
-          ))}
-        </div>
-      )}
+            {c.prompt && (
+              <p className="text-yellow-300 truncate mb-0.5">❓ {c.prompt}</p>
+            )}
+            <p className="text-purple-300 truncate">💬 {c.reply || '—'}</p>
+            <p className="text-right mt-1 font-mono" style={{ color: 'var(--color-muted)' }}>
+              {c.model}
+            </p>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

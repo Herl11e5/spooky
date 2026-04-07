@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react'
 import { useRobotStore } from '../store/robotStore'
-import { Video } from 'lucide-react'
 
 export default function CameraFeed() {
   const imgRef = useRef(null)
@@ -8,39 +7,35 @@ export default function CameraFeed() {
 
   useEffect(() => {
     if (!imgRef.current) return
-    // MJPEG stream — set src once, the browser handles the continuous stream
     imgRef.current.src = '/camera'
   }, [])
 
   return (
-    <div className="border-2 border-spooky-neon-cyan rounded-lg overflow-hidden bg-black">
-      <div className="relative aspect-video bg-black flex items-center justify-center">
+    <div className="card p-0 overflow-hidden">
+      <div className="relative" style={{ background: '#000', aspectRatio: '16/9' }}>
         <img
           ref={imgRef}
-          alt="Camera Feed"
+          alt="Camera"
           className="w-full h-full object-cover"
-          onError={(e) => {
-            setTimeout(() => { e.target.src = '/camera?t=' + Date.now() }, 3000)
-          }}
+          onError={(e) => { setTimeout(() => { e.target.src = '/camera?t=' + Date.now() }, 3000) }}
         />
-        <Video className="absolute top-4 left-4 text-spooky-neon-cyan opacity-60" />
-
-        {/* Overlay Info */}
-        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black to-transparent p-4 text-sm space-y-1">
+        {/* overlay top-left label */}
+        <div className="absolute top-2 left-2">
+          <span className="badge" style={{ background: '#00000080', color: '#06b6d4', border: '1px solid #06b6d460' }}>
+            📷 LIVE
+          </span>
+        </div>
+        {/* overlay bottom */}
+        <div className="absolute bottom-0 left-0 right-0 px-3 py-2"
+             style={{ background: 'linear-gradient(transparent, #00000090)' }}>
           {scene && (
-            <div className="text-spooky-neon-green">
-              👁️ {scene}
-            </div>
+            <p className="text-xs text-green-400 truncate mb-0.5">👁️ {scene}</p>
           )}
           {objects && (
-            <div className="text-spooky-neon-yellow">
-              🔍 Objects: {objects}
-            </div>
+            <p className="text-xs text-yellow-400 truncate">🔍 {objects}</p>
           )}
           {!scene && !objects && (
-            <div className="text-spooky-neon-cyan/60">
-              No scene analysis available
-            </div>
+            <p className="text-xs" style={{ color: 'var(--color-muted)' }}>Nessuna analisi disponibile</p>
           )}
         </div>
       </div>

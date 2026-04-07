@@ -1,48 +1,40 @@
 import { useRobotStore } from '../store/robotStore'
 import { api } from '../services/api'
-import { Gamepad2 } from 'lucide-react'
+
+const MODES = [
+  { id: 'companion_day',   icon: '🌞', label: 'Companion',  color: '#22c55e' },
+  { id: 'focus_assistant', icon: '🎯', label: 'Focus',      color: '#06b6d4' },
+  { id: 'idle_observer',   icon: '👁️', label: 'Observer',   color: '#a855f7' },
+  { id: 'night_watch',     icon: '🌙', label: 'Night Watch',color: '#eab308' },
+]
 
 export default function ModeButtons() {
   const { mode, setMode } = useRobotStore()
 
-  const modes = [
-    { id: 'companion_day', label: '🌞 Companion', desc: 'Social & playful' },
-    { id: 'focus_assistant', label: '🎯 Focus', desc: 'Productive mode' },
-    { id: 'idle_observer', label: '👁️ Observer', desc: 'Curious explorer' },
-    { id: 'night_watch', label: '🌙 Night', desc: 'Silent watcher' },
-  ]
-
-  const handleMode = async (m) => {
-    setMode(m)
-    try {
-      await api.setMode(m)
-    } catch (err) {
-      console.error('Mode change error:', err)
-    }
+  const handleMode = async (id) => {
+    setMode(id)
+    try { await api.setMode(id) } catch (e) { console.error(e) }
   }
 
   return (
-    <div className="border-2 border-spooky-neon-yellow rounded-lg p-4 bg-black/30">
-      <h3 className="text-lg font-bold text-spooky-neon-yellow flex items-center gap-2 mb-3">
-        <Gamepad2 className="w-5 h-5" />
-        Modes
-      </h3>
-
+    <div className="card">
+      <p className="card-title">⚙️ Modalità</p>
       <div className="grid grid-cols-2 gap-2">
-        {modes.map(({ id, label, desc }) => (
-          <button
-            key={id}
-            onClick={() => handleMode(id)}
-            className={`p-3 rounded font-bold text-sm transition-all ${
-              mode === id
-                ? 'bg-spooky-neon-yellow text-black border-2 border-spooky-neon-yellow'
-                : 'bg-black/50 text-spooky-neon-yellow border-2 border-spooky-neon-yellow/30 hover:border-spooky-neon-yellow'
-            }`}
-          >
-            <div>{label}</div>
-            <div className="text-xs opacity-70 font-normal">{desc}</div>
-          </button>
-        ))}
+        {MODES.map(({ id, icon, label, color }) => {
+          const active = mode === id
+          return (
+            <button key={id} onClick={() => handleMode(id)}
+                    className="rounded-lg px-3 py-3 text-sm font-semibold text-left transition-all"
+                    style={{
+                      background: active ? `${color}18` : '#0f172a',
+                      border: `1px solid ${active ? color : 'var(--color-border)'}`,
+                      color: active ? color : 'var(--color-muted)',
+                    }}>
+              <div className="text-base">{icon}</div>
+              <div className="mt-0.5">{label}</div>
+            </button>
+          )
+        })}
       </div>
     </div>
   )

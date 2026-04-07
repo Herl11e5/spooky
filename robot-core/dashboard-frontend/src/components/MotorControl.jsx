@@ -1,82 +1,59 @@
-import { Zap } from 'lucide-react'
 import { api } from '../services/api'
 
+const BTN = 'w-11 h-11 rounded-lg font-bold text-sm flex items-center justify-center select-none cursor-pointer active:scale-95 transition-transform'
+
 export default function MotorControl() {
-  const handleMotor = (action) => {
-    api.motorCmd(action)
-  }
+  const motor = (action) => api.motorCmd(action)
 
   return (
-    <div className="border-2 border-spooky-neon-yellow rounded-lg p-4 bg-black/30">
-      <h3 className="text-lg font-bold text-spooky-neon-yellow flex items-center gap-2 mb-4">
-        <Zap className="w-5 h-5" />
-        Motori
-      </h3>
+    <div className="card">
+      <p className="card-title">🕹️ Motori</p>
 
-      {/* Direction Pad */}
-      <div className="grid grid-cols-3 gap-2 w-fit mx-auto mb-4">
+      {/* D-pad */}
+      <div className="grid grid-cols-3 gap-2 w-fit mx-auto mb-3">
         <div />
-        <button
-          onMouseDown={() => handleMotor('forward')}
-          onMouseUp={() => handleMotor('stop')}
-          onTouchStart={() => handleMotor('forward')}
-          onTouchEnd={() => handleMotor('stop')}
-          className="w-12 h-12 bg-spooky-neon-yellow text-black rounded font-bold active:opacity-70"
-        >
+        <button className={BTN}
+          style={{ background: '#1e3a5f', color: '#93c5fd', border: '1px solid #3b82f620' }}
+          onMouseDown={() => motor('forward')} onMouseUp={() => motor('stop')}
+          onTouchStart={() => motor('forward')} onTouchEnd={() => motor('stop')}>
           ▲
         </button>
         <div />
 
-        <button
-          onMouseDown={() => handleMotor('left')}
-          onMouseUp={() => handleMotor('stop')}
-          onTouchStart={() => handleMotor('left')}
-          onTouchEnd={() => handleMotor('stop')}
-          className="w-12 h-12 bg-spooky-neon-cyan text-black rounded font-bold active:opacity-70"
-        >
+        <button className={BTN}
+          style={{ background: '#1e3a5f', color: '#93c5fd', border: '1px solid #3b82f620' }}
+          onMouseDown={() => motor('left')} onMouseUp={() => motor('stop')}
+          onTouchStart={() => motor('left')} onTouchEnd={() => motor('stop')}>
           ◀
         </button>
-        <button
-          onClick={() => handleMotor('stop')}
-          className="w-12 h-12 bg-spooky-neon-red text-white rounded font-bold"
-        >
+        <button className={BTN}
+          style={{ background: '#3b1e1e', color: '#fca5a5', border: '1px solid #ef444440' }}
+          onClick={() => motor('stop')}>
           ■
         </button>
-        <button
-          onMouseDown={() => handleMotor('right')}
-          onMouseUp={() => handleMotor('stop')}
-          onTouchStart={() => handleMotor('right')}
-          onTouchEnd={() => handleMotor('stop')}
-          className="w-12 h-12 bg-spooky-neon-cyan text-black rounded font-bold active:opacity-70"
-        >
+        <button className={BTN}
+          style={{ background: '#1e3a5f', color: '#93c5fd', border: '1px solid #3b82f620' }}
+          onMouseDown={() => motor('right')} onMouseUp={() => motor('stop')}
+          onTouchStart={() => motor('right')} onTouchEnd={() => motor('stop')}>
           ▶
         </button>
 
         <div />
-        <button
-          onMouseDown={() => handleMotor('backward')}
-          onMouseUp={() => handleMotor('stop')}
-          onTouchStart={() => handleMotor('backward')}
-          onTouchEnd={() => handleMotor('stop')}
-          className="w-12 h-12 bg-spooky-neon-yellow text-black rounded font-bold active:opacity-70"
-        >
+        <button className={BTN}
+          style={{ background: '#1e3a5f', color: '#93c5fd', border: '1px solid #3b82f620' }}
+          onMouseDown={() => motor('backward')} onMouseUp={() => motor('stop')}
+          onTouchStart={() => motor('backward')} onTouchEnd={() => motor('stop')}>
           ▼
         </button>
         <div />
       </div>
 
-      {/* Action Buttons */}
+      {/* Actions */}
       <div className="grid grid-cols-2 gap-2">
-        <button
-          onClick={() => handleMotor('wave')}
-          className="px-3 py-2 bg-spooky-neon-purple text-white rounded text-sm font-bold hover:opacity-80"
-        >
+        <button className="btn btn-ghost text-purple-400" onClick={() => motor('wave')}>
           👋 Wave
         </button>
-        <button
-          onClick={() => handleMotor('center')}
-          className="px-3 py-2 bg-spooky-neon-purple text-white rounded text-sm font-bold hover:opacity-80"
-        >
+        <button className="btn btn-ghost text-purple-400" onClick={() => motor('center')}>
           🎯 Center
         </button>
       </div>
