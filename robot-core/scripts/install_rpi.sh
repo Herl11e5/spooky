@@ -345,7 +345,42 @@ else
     fi
 fi
 
-# ── 8. Ollama ─────────────────────────────────────────────────────────────────
+# ── 8. Piper TTS (voce neurale italiana — stile Baymax) ──────────────────────
+step "Piper TTS (voce neurale italiana)"
+PIPER_VOICES_DIR="$HOME/piper-voices"
+PIPER_VOICE="it_IT-riccardo-x_low"
+PIPER_ONNX="$PIPER_VOICES_DIR/${PIPER_VOICE}.onnx"
+PIPER_JSON="$PIPER_VOICES_DIR/${PIPER_VOICE}.onnx.json"
+
+# Installa piper-tts nel venv
+log "  ⏳ pip install piper-tts..."
+if "$PIP" install piper-tts --quiet 2>&1 | tee -a "$LOG"; then
+    ok "piper-tts installato"
+else
+    warn "piper-tts pip fallito — voce neurale non disponibile (fallback: espeak-ng)"
+    WARNINGS+=("piper-tts: installazione fallita")
+fi
+
+# Scarica modello vocale
+mkdir -p "$PIPER_VOICES_DIR"
+if [ -f "$PIPER_ONNX" ] && [ -f "$PIPER_JSON" ]; then
+    ok "Modello piper già presente: $PIPER_VOICE"
+else
+    HF_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/it/it_IT/riccardo/x_low"
+    log "  📥 Download modello piper ($PIPER_VOICE)..."
+    DL_OK=true
+    curl -L --progress-bar "$HF_BASE/${PIPER_VOICE}.onnx"      -o "$PIPER_ONNX" 2>&1 | tee -a "$LOG" || DL_OK=false
+    curl -L --progress-bar "$HF_BASE/${PIPER_VOICE}.onnx.json" -o "$PIPER_JSON" 2>&1 | tee -a "$LOG" || DL_OK=false
+    if [ "$DL_OK" = true ] && [ -f "$PIPER_ONNX" ] && [ -f "$PIPER_JSON" ]; then
+        ok "Modello piper scaricato: $PIPER_VOICE"
+    else
+        warn "Download modello piper fallito — Spooky userà espeak-ng"
+        WARNINGS+=("piper: download modello fallito — fallback espeak-ng")
+        rm -f "$PIPER_ONNX" "$PIPER_JSON"
+    fi
+fi
+
+# ── 9. Ollama ─────────────────────────────────────────────────────────────────
 step "Ollama"
 if command -v ollama &>/dev/null; then
     ok "ollama già installato: $(ollama --version 2>&1 | head -1)"
@@ -409,7 +444,7 @@ else
     fi
 fi
 
-# ── 9. Configurazione locale ──────────────────────────────────────────────────
+# ── 10. Configurazione locale ─────────────────────────────────────────────────
 step "Configurazione locale"
 LOCAL_CFG="$CORE_DIR/config/local.yaml"
 EXAMPLE_CFG="$CORE_DIR/config/local.yaml.example"
@@ -422,7 +457,7 @@ else
     warn "local.yaml.example non trovato — crea $LOCAL_CFG manualmente"
 fi
 
-# ── 10. Test audio ────────────────────────────────────────────────────────────
+# ── 11. Test audio ────────────────────────────────────────────────────────────
 step "Test audio"
 if command -v espeak-ng &>/dev/null && command -v aplay &>/dev/null; then
     TMP_WAV="/tmp/spooky_test.wav"
@@ -465,7 +500,7 @@ else
     WARNINGS+=("Audio: espeak-ng o aplay mancanti")
 fi
 
-# ── 11. Systemd service (avvio manuale) ──────────────────────────────────────
+# ── 12. Systemd service (avvio manuale) ──────────────────────────────────────
 step "Servizio systemd"
 SERVICE_SRC="$CORE_DIR/scripts/spooky.service"
 SERVICE_DST="/etc/systemd/system/spooky.service"
@@ -482,16 +517,16 @@ else
     warn "spooky.service non trovato"
 fi
 
-# ── 12. Script avvio ─────────────────────────────────────────────────────────
+# ── 13. Script avvio ─────────────────────────────────────────────────────────
 step "Script start.sh"
 chmod +x "$CORE_DIR/scripts/"*.sh 2>/dev/null || true
 if [ -f "$CORE_DIR/scripts/start.sh" ]; then
     ok "start.sh pronto"
 fi
 
-# ── 13. Verifica importazioni Python ─────────────────────────────────────────
+# ── 14. Verifica importazioni Python ─────────────────────────────────────────
 step "Verifica importazioni Python"
-VERIFY_MODS=(numpy cv2 flask vosk sounddevice ollama psutil yaml smbus2)
+VERIFY_MODS=(numpy cv2 flask vosk sounddevice ollama psutil yaml smbus2 piper)
 for mod in "${VERIFY_MODS[@]}"; do
     if python -c "import $mod" &>/dev/null 2>&1; then
         ok "import $mod"
@@ -529,6 +564,12 @@ echo
 echo "   Modelli ollama installati:"
 ollama list 2>/dev/null | tail -n +2 | while IFS= read -r l; do echo "     $l"; done \
     || echo "     (ollama non disponibile)"
+echo
+if [ -f "$HOME/piper-voices/it_IT-riccardo-x_low.onnx" ]; then
+    echo "   🎤 Voce TTS: piper neurale (it_IT-riccardo-x_low) ✅"
+else
+    echo "   🎤 Voce TTS: espeak-ng (piper non disponibile)"
+fi
 
 echo
 echo "   OS Rilevato: $OS_PRETTY"
