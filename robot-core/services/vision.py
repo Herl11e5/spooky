@@ -361,7 +361,7 @@ class FaceDetector:
     Returns list of (x, y, w, h) bounding boxes (in RGB frame coordinates).
     """
 
-    def __init__(self, scale_factor: float = 1.1, min_neighbours: int = 3):
+    def __init__(self, scale_factor: float = 1.1, min_neighbours: int = 5):
         data_dir = cv2.data.haarcascades
         path     = os.path.join(data_dir, "haarcascade_frontalface_default.xml")
         if not os.path.exists(path):
@@ -371,7 +371,7 @@ class FaceDetector:
         self._mn  = min_neighbours
 
     def detect(self, frame_rgb: np.ndarray,
-               min_size: int = 40) -> List[Tuple[int,int,int,int]]:
+               min_size: int = 60) -> List[Tuple[int,int,int,int]]:
         gray  = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
         # equalizeHist migliora la rilevazione in condizioni di luce scarsa
         gray  = cv2.equalizeHist(gray)
@@ -427,7 +427,11 @@ class VisionService:
         )
 
         # Detector + recognizer
-        self._detector   = FaceDetector()
+        det_cfg  = cfg.get("face.detector", {})
+        self._detector = FaceDetector(
+            scale_factor   = det_cfg.get("scale_factor",    1.15),
+            min_neighbours = det_cfg.get("min_neighbours",  5),
+        )
         self._recognizer = FaceRecognizer()
 
         # Intervals

@@ -47,8 +47,7 @@ from services.alert_adapters import build_adapters
 from services.learning       import LearningService
 from services.experiment     import ExperimentEngine
 from services.summarizer     import Summarizer, set_ollama_lock as set_summarizer_lock
-from services.personality    import PersonalityService, PersonalityTraits
-from services.emotion        import EmotionService
+from services.brain          import BrainService
 from services.social_memory  import SocialMemory
 from skills.track_face      import TrackFaceSkill
 from skills.idle_behavior   import IdleBehaviorSkill
@@ -177,20 +176,10 @@ class RobotRuntime:
         # ── Conscience (internal drives) ──────────────────────────────────────────
         self._conscience = Conscience(self._bus, self._modes)
 
-        # ── Personality (traits & mood system) ────────────────────────────────────
-        # Load personality traits from config or use defaults
-        pers_cfg = cfg.get("personality", {})
-        personality_traits = PersonalityTraits(
-            curiosity=pers_cfg.get("curiosity", 0.7),
-            friendliness=pers_cfg.get("friendliness", 0.6),
-            mischief=pers_cfg.get("mischief", 0.5),
-            loyalty=pers_cfg.get("loyalty", 0.8),
+        # ── Brain (unified behavior loop — replaces Personality + Emotion) ────────
+        self._brain = BrainService(
+            self._bus, self._modes, self._motor, self._choreo, self._audio
         )
-        self._personality = PersonalityService(self._bus, self._modes, traits=personality_traits)
-
-        # ── Emotion expression (movement + voice from mood) ───────────────────────
-        self._emotion = EmotionService(self._bus)
-        self._emotion.set_services(self._motor, self._audio, self._choreo)
 
         # ── Social memory (track relationships) ────────────────────────────────────
         self._social_memory = SocialMemory(self._bus, self._memory)
@@ -280,8 +269,7 @@ class RobotRuntime:
         self._audio.start()
         self._vision.start()
         self._conscience.start()
-        self._personality.start()
-        self._emotion.start()
+        self._brain.start()
         self._social_memory.start()
         self._mind.start()
         self._learning.apply_behavior_preferences()
@@ -317,8 +305,7 @@ class RobotRuntime:
         self._experiments.stop()
         self._summarizer.stop()
         self._night_watch.stop()
-        self._emotion.stop()
-        self._personality.stop()
+        self._brain.stop()
         self._social_memory.stop()
         self._conscience.stop()
         self._mind.stop()

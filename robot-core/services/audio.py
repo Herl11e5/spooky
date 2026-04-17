@@ -55,10 +55,21 @@ class AudioOutput:
       4. silent             (logs only — for CI/testing)
     """
 
+    M_PIPER         = "piper"
     M_ESPEAK_APLAY  = "espeak_aplay"
     M_ESPEAK_PAPLAY = "espeak_paplay"
     M_PYTTSX3       = "pyttsx3"
     M_SILENT        = "silent"
+
+    # Baymax-inspired voice: calm, warm, slightly deep
+    _ESPEAK_VOICE     = "it+m3"
+    _ESPEAK_SPEED     = "115"
+    _ESPEAK_PITCH     = "48"
+    _ESPEAK_AMPLITUDE = "68"
+
+    # Piper TTS (neural, high quality)
+    _PIPER_VOICE     = "it_IT-riccardo-x_low"
+    _PIPER_VOICES_DIR = "~/piper-voices"
 
     def __init__(self, bus: EventBus, language: str = "it", method: str = "auto"):
         self._bus        = bus
@@ -141,7 +152,9 @@ class AudioOutput:
     # ── backend dispatch ──────────────────────────────────────────────────────
 
     def _speak(self, text: str, wav_path: str) -> None:
-        if self._method == self.M_ESPEAK_APLAY:
+        if self._method == self.M_PIPER:
+            self._piper_speak(text, wav_path)
+        elif self._method == self.M_ESPEAK_APLAY:
             self._espeak_aplay(text, wav_path)
         elif self._method == self.M_ESPEAK_PAPLAY:
             self._espeak_paplay(text, wav_path)
@@ -150,59 +163,70 @@ class AudioOutput:
         else:
             log.debug(f"TTS [silent]: {text}")
 
-    def _espeak_aplay(self, text: str, wav_path: str) -> None:
+    def _piper_speak(self, text: str, wav_path: str) -> None:
+        """Neural TTS via piper-tts Python package. Falls back to espeak-ng."""
         try:
-            subprocess.run(
-                ["espeak-ng", "-v", self._lang, "-s", "145", "-w", wav_path, text],
-                check=True, capture_output=True, timeout=15,
-            )
+            import wave as _wave
+            from piper.voice import PiperVoice
+            voices_dir = Path(self._PIPER_VOICES_DIR).expanduser()
+            model_onnx = voices_dir / f"{self._PIPER_VOICE}.onnx"
+            if not model_onnx.exists():
+                raise FileNotFoundError(f"Piper model missing: {model_onnx}")
+            voice = PiperVoice.load(str(model_onnx), use_cuda=False)
+            with _wave.open(wav_path, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(voice.config.sample_rate)
+                voice.synthesize(text, wf)
+            self._play_wav(wav_path)
         except Exception as e:
-            log.error(f"TTS espeak-ng: {e}"); return
+            log.warning(f"piper: {e} — using espeak-ng")
+            self._espeak_aplay(text, wav_path)
 
-        # Build device list: detected non-HDMI card first, then named fallbacks
-        # SKIP generic default/plug:default — HDMI "succeeds" silently on RPi
+    def _play_wav(self, wav_path: str) -> None:
+        """Play a WAV file via the best available ALSA device."""
         dev_list: list = []
         if self._aplay_dev:
             dev_list.append(["-D", self._aplay_dev])
-        # Named non-HDMI fallbacks (stable card names)
         dev_list += [
             ["-D", "plughw:CARD=sndrpihifiberry,DEV=0"],
-            ["-D", "plughw:CARD=b1,DEV=0"],      # robot-hat I2S amp
+            ["-D", "plughw:CARD=b1,DEV=0"],
             ["-D", "plughw:CARD=Headphones,DEV=0"],
         ]
-
-        played = False
         for dev_args in dev_list:
             r = subprocess.run(
                 ["aplay", "-q"] + dev_args + [wav_path],
                 capture_output=True, timeout=30,
             )
             if r.returncode == 0:
-                log.info(f"TTS: played via {dev_args[1] if dev_args else 'default'}")
-                played = True
-                break
-            log.debug(f"TTS aplay {dev_args}: {r.stderr.decode(errors='replace')[:80]}")
+                return
+        log.warning("TTS: all aplay devices failed")
 
-        if not played:
-            # Ultimo tentativo: espeak-ng con AUDIODEV puntato al device rilevato
-            log.warning("TTS: aplay failed — trying espeak-ng direct")
-            env = os.environ.copy()
-            if self._aplay_dev:
-                # Estrai card name per ALSA_OUTPUT
-                env["AUDIODEV"] = self._aplay_dev.replace("plughw:", "hw:")
-            try:
-                subprocess.run(
-                    ["espeak-ng", "-v", self._lang, "-s", "145", text],
-                    timeout=15, env=env,
-                )
-                played = True
-            except Exception as e2:
-                log.error(f"TTS: all methods failed — {e2}")
+    def _espeak_aplay(self, text: str, wav_path: str) -> None:
+        try:
+            subprocess.run(
+                ["espeak-ng",
+                 "-v", self._ESPEAK_VOICE,
+                 "-s", self._ESPEAK_SPEED,
+                 "-p", self._ESPEAK_PITCH,
+                 "-a", self._ESPEAK_AMPLITUDE,
+                 "-w", wav_path, text],
+                check=True, capture_output=True, timeout=15,
+            )
+        except Exception as e:
+            log.error(f"TTS espeak-ng: {e}"); return
+
+        self._play_wav(wav_path)
 
     def _espeak_paplay(self, text: str, wav_path: str) -> None:
         try:
             subprocess.run(
-                ["espeak-ng", "-v", self._lang, "-s", "145", "-w", wav_path, text],
+                ["espeak-ng",
+                 "-v", self._ESPEAK_VOICE,
+                 "-s", self._ESPEAK_SPEED,
+                 "-p", self._ESPEAK_PITCH,
+                 "-a", self._ESPEAK_AMPLITUDE,
+                 "-w", wav_path, text],
                 check=True, capture_output=True, timeout=15,
             )
             subprocess.run(["paplay", wav_path], check=True, capture_output=True, timeout=30)
@@ -224,6 +248,17 @@ class AudioOutput:
     def _detect(self, method: str) -> str:
         if method != "auto":
             return method
+        # piper-tts (neural, highest quality) — requires model file
+        voices_dir = Path(self._PIPER_VOICES_DIR).expanduser()
+        model_onnx = voices_dir / f"{self._PIPER_VOICE}.onnx"
+        if model_onnx.exists():
+            try:
+                from piper.voice import PiperVoice  # noqa
+                log.info("AudioOutput: piper-tts available — using neural voice")
+                return self.M_PIPER
+            except ImportError:
+                log.debug("AudioOutput: piper-tts package not installed")
+        # espeak-ng (Baymax-tuned parameters)
         if self._cmd_ok("espeak-ng") and self._cmd_ok("aplay"):
             return self.M_ESPEAK_APLAY
         if self._cmd_ok("espeak-ng") and self._cmd_ok("paplay"):
@@ -509,11 +544,12 @@ class AudioService:
 
         lang       = robot_cfg.get("language", "it")
         tts_method = audio_cfg.get("tts_method", "auto")
-        wake_word  = audio_cfg.get("wake_word", "spooky")
-        vosk_model = audio_cfg.get("vosk_model", "~/vosk-model-it")
-        samplerate = audio_cfg.get("samplerate", 16000)
-        blocksize  = audio_cfg.get("blocksize",  8000)
-        device     = audio_cfg.get("mic_device", None)   # None = sounddevice default
+        wake_word    = audio_cfg.get("wake_word", "spooky")
+        vosk_model   = audio_cfg.get("vosk_model", "~/vosk-model-it")
+        samplerate   = audio_cfg.get("samplerate", 16000)
+        blocksize    = audio_cfg.get("blocksize",  8000)
+        device       = audio_cfg.get("mic_device", None)   # None = sounddevice default
+        cmd_timeout  = audio_cfg.get("command_timeout_s", 3.0)
 
         self._out = AudioOutput(bus, language=lang, method=tts_method)
         self._inp = AudioInput(
@@ -522,6 +558,7 @@ class AudioService:
             vosk_model_path=vosk_model,
             samplerate=samplerate,
             blocksize=blocksize,
+            command_timeout_s=cmd_timeout,
             device=device,
         )
 
