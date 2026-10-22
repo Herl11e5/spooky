@@ -73,8 +73,9 @@ class AudioOutput:
     _PIPER_VOICES_DIR = "~/piper-voices"
 
     def __init__(self, bus: EventBus, language: str = "it", method: str = "auto",
-                 speaker_pin: Optional[int] = None):
+                 speaker_pin: Optional[int] = None, piper_voice: Optional[str] = None):
         self._bus        = bus
+        self._piper_voice = piper_voice or self._PIPER_VOICE
         self._lang       = language
         self._lock       = threading.Lock()
         self._aplay_dev  = self._detect_aplay_device()   # best non-HDMI card
@@ -193,7 +194,7 @@ class AudioOutput:
             from piper.voice import PiperVoice
             if self._piper is None:
                 voices_dir = Path(self._PIPER_VOICES_DIR).expanduser()
-                model_onnx = voices_dir / f"{self._PIPER_VOICE}.onnx"
+                model_onnx = voices_dir / f"{self._piper_voice}.onnx"
                 if not model_onnx.exists():
                     raise FileNotFoundError(f"Piper model missing: {model_onnx}")
                 self._piper = PiperVoice.load(str(model_onnx), use_cuda=False)
@@ -278,7 +279,7 @@ class AudioOutput:
             return method
         # piper-tts (neural, highest quality) — requires model file
         voices_dir = Path(self._PIPER_VOICES_DIR).expanduser()
-        model_onnx = voices_dir / f"{self._PIPER_VOICE}.onnx"
+        model_onnx = voices_dir / f"{self._piper_voice}.onnx"
         if model_onnx.exists():
             try:
                 from piper.voice import PiperVoice  # noqa
@@ -580,7 +581,8 @@ class AudioService:
         cmd_timeout  = audio_cfg.get("command_timeout_s", 3.0)
 
         self._out = AudioOutput(bus, language=lang, method=tts_method,
-                                speaker_pin=audio_cfg.get("speaker_enable_pin"))
+                                speaker_pin=audio_cfg.get("speaker_enable_pin"),
+                                piper_voice=audio_cfg.get("piper_voice"))
         self._inp = AudioInput(
             bus,
             wake_word=wake_word,
