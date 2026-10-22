@@ -16,12 +16,17 @@ Mapping:
   turn(degrees)          positive = right, spooky's convention (as for pan). Closed
                          on the body's camera compass; timed when it has none.
   stand / sit            enable / disable on the body (sit = sit down, servos off).
-  look_at, look_center, nudge_toward
-      the PiCrawler has no head, so the body turns instead; pan is kept as the
-      angle the robot is looking at relative to where it started.
-  tilt_head              no head and no body pitch yet: recorded only.
-  wave, shake_head, wiggle_dance, spin_head, pat_desk, hop, climb, nudge
-      approximations with turns and steps until the body has gestures.
+  look_at, look_center, tilt_head, pan_head
+      the PiCrawler has no head, so a head look becomes a body lean in proportion:
+      spooky's pan range maps onto the body's ±18° of yaw, its tilt range onto
+      ±10° of pitch. Choreographies written for a quick head stay quick and
+      expressive, take no steps and leave the heading alone — turning the body
+      for every glance made it creep and wind round (158° in 40 s).
+  nudge_toward           face tracking: leans after the face, and turns only once
+                         the lean runs out — a face is worth facing.
+  wave, shake_head, nod, wiggle_dance, spin_head, pat_desk, hop, stretch
+      the body's gestures (body poses, no steps); hop becomes a bounce.
+  climb, nudge           short walks.
   scan_environment       turns in steps on the compass, reading the distance each time.
 
 Speeds: spooky's 0–100 become the body's 0–1 fraction, after SafetyMonitor.clamp_speed.
@@ -46,6 +51,15 @@ log = logging.getLogger(__name__)
 _OVERLAP_S = 0.3          # an intent outlives its step by this much: no stop between steps
 _TURN_TOLERANCE_DEG = 3.0
 _MIN_TURN_RATE = 0.15     # rad/s — below this the gait barely turns
+_LEAN_YAW_DEG = 18.0      # how far the body can lean left/right (the body's look limit)
+_LEAN_PITCH_DEG = 10.0    # and up/down
+
+
+def _scale(value: float, low: float, high: float, reach: float) -> float:
+    """Map [low, 0, high] onto [-reach, 0, +reach], each side on its own."""
+    if value >= 0:
+        return value / high * reach if high > 0 else 0.0
+    return value / -low * reach if low < 0 else 0.0
 
 
 def _wrap_deg(a: float) -> float:
@@ -67,8 +81,9 @@ class PicrawlerMotorService:
         self._posture = Posture.STAND
         self._pan_deg = 0.0      # where the robot "looks", relative to where it started
         self._tilt_deg = 0
+        self._lean_yaw = 0.0     # the body's current lean, the body's convention (left > 0)
+        self._lean_pitch = 0.0
         self._moving = False
-        self._noted: set[str] = set()
 
         bus.subscribe(EventType.OBSTACLE_DETECTED, self._on_obstacle)
         bus.subscribe(EventType.SHUTDOWN_REQUEST, self._on_shutdown)
@@ -164,63 +179,74 @@ class PicrawlerMotorService:
         self._posture = Posture.SIT
         self._body.disable()
 
-    # ── looking: the body turns, there is no head ─────────────────────────────
+    # ── looking: the body leans and turns, there is no head ──────────────────
 
     def look_at(self, pan: int = 0, tilt: int = 0) -> None:
-        """pan > 0 = right, < 0 = left (degrees). tilt is recorded only."""
+        """
+        pan > 0 = right, tilt > 0 = up, degrees of the head spooky imagines. The
+        body leans in proportion — the whole pan range onto ±18°, the tilt range
+        onto ±10° — without stepping.
+        """
         pan = self._safety.clamp_pan(pan)
-        self._tilt_deg = self._safety.clamp_tilt(tilt)
-        delta = pan - self._pan_deg
-        if abs(delta) >= 5:
-            self.turn(delta, speed=40)
-        self._pan_deg = pan
+        tilt = self._safety.clamp_tilt(tilt)
+        limits = self._safety._limits
+        self._lean(_scale(pan, limits.pan_min, limits.pan_max, _LEAN_YAW_DEG),
+                   _scale(tilt, limits.tilt_min, limits.tilt_max, _LEAN_PITCH_DEG))
+        self._pan_deg, self._tilt_deg = pan, tilt
 
     def look_center(self) -> None:
         self.look_at(0, 0)
 
     def nudge_toward(self, dx: float, dy: float, gain: float = 0.05) -> None:
         """
-        Turn the body to bring a target at normalised (dx, dy) toward the centre
-        (dx +1 = right edge of the image). Called on every face event; the body's
-        deadman stops the turn when the events stop.
+        Bring a target at normalised (dx, dy) toward the centre of the image
+        (dx +1 = right edge, dy +1 = bottom). Called on every face event: the body
+        leans after it without stepping, and turns only once the lean runs out.
         """
-        k = max(0.2, min(1.0, gain * 16))
-        self._body.move(vyaw=-dx * k * self._max_ang)
+        k = max(0.5, min(4.0, gain * 60))          # degrees of lean per unit of offset
+        yaw = self._lean_yaw - dx * k              # body yaw: left is positive
+        pitch = self._lean_pitch - dy * k
+        if abs(yaw) > _LEAN_YAW_DEG:
+            self._body.move(vyaw=math.copysign(0.25 * self._max_ang, yaw))   # out of lean: turn
+            yaw = math.copysign(_LEAN_YAW_DEG, yaw)
+        self._lean(-yaw, pitch)
 
     def pan_head(self, angle: Optional[float] = None, speed: Optional[int] = None) -> None:
         """pan_head(0): look ahead again. pan_head(speed=…): look around once."""
         if angle is not None:
             self.look_at(int(angle), self._tilt_deg)
             return
-        s = speed or 30
-        self.turn(-25, s)
-        self.turn(50, s)
-        self.turn(-25, s)
+        self._gesture("look_around")
 
     def tilt_head(self, angle: float = 0) -> None:
-        self._tilt_deg = self._safety.clamp_tilt(int(angle))
-        self._note("tilt_head", "no head and no body pitch yet: tilt is recorded only")
+        self.look_at(int(self._pan_deg), int(angle))
 
-    # ── expressive moves, approximated until the body has gestures ────────────
+    # ── expressive moves: the body's gestures ─────────────────────────────────
 
     def wave(self) -> None:
-        self._note("wave", "waiting for body gestures: no wave yet")
+        self._gesture("wave")
 
     def shake_head(self) -> None:
-        """A 'no' with the whole body."""
-        self._wiggle(15, 2, speed=70)
+        self._gesture("shake")
+
+    def nod(self) -> None:
+        self._gesture("nod")
 
     def wiggle_dance(self) -> None:
-        self._wiggle(20, 3, speed=100)
+        self._gesture("wiggle")
 
     def spin_head(self, speed: int = 80) -> None:
-        self._wiggle(35, 2, speed=speed)
+        self._gesture("look_around")
 
     def pat_desk(self) -> None:
-        self._note("pat_desk", "waiting for body gestures: no desk pat yet")
+        self._gesture("pat_desk")
 
     def hop(self) -> None:
-        self._note("hop", "a PiCrawler cannot hop: skipped")
+        """A PiCrawler cannot hop: it bounces on its legs instead."""
+        self._gesture("bounce")
+
+    def stretch(self) -> None:
+        self._gesture("stretch")
 
     def climb(self) -> None:
         self.move_forward(distance=10, speed=40)
@@ -292,18 +318,21 @@ class PicrawlerMotorService:
             time.sleep(duration)
             self._moving = False
 
-    def _wiggle(self, degrees: float, times: int, speed: int) -> None:
-        """Short open-loop turns either side and back: playful, quick, bounded."""
-        frac = self._frac(speed)
-        if frac <= 0:
+    def _gesture(self, name: str) -> None:
+        """Play a body gesture and wait for it, as do_action() did."""
+        if self._body.gesture(name):
+            self._lean_yaw = self._lean_pitch = 0.0     # a gesture ends in the stand pose
+            self._moving = True
+            time.sleep(self._body.gestures().get(name, 1.0))
+            self._moving = False
+
+    def _lean(self, pan_right_deg: float, tilt_up_deg: float) -> None:
+        """Hold the body leaning `pan_right_deg` to the right and `tilt_up_deg` up."""
+        yaw = max(-_LEAN_YAW_DEG, min(_LEAN_YAW_DEG, -pan_right_deg))
+        if abs(yaw - self._lean_yaw) < 0.5 and abs(tilt_up_deg - self._lean_pitch) < 0.5:
             return
-        pulse = math.radians(degrees) / (frac * self._max_ang)
-        for _ in range(times):
-            for action in ("TURN_LEFT", "TURN_RIGHT", "TURN_RIGHT", "TURN_LEFT"):
-                if not self._body.command(action, frac, duration=pulse / 2):
-                    return
-                time.sleep(pulse / 2)
-        self.stop()
+        if self._body.look(yaw=yaw, pitch=tilt_up_deg):
+            self._lean_yaw, self._lean_pitch = yaw, tilt_up_deg
 
     def _edge(self, direction: str) -> bool:
         """Spooky's IMU edge check, kept for parity (the PiCrawler has no IMU: always False)."""
@@ -314,11 +343,6 @@ class PicrawlerMotorService:
         self._bus.publish(EventType.OBSTACLE_DETECTED, {"type": "edge", "direction": direction},
                           source="MotorService")
         return True
-
-    def _note(self, what: str, why: str) -> None:
-        if what not in self._noted:
-            self._noted.add(what)
-            log.info(f"PicrawlerMotorService: {what} — {why}")
 
     def _on_obstacle(self, ev) -> None:
         log.info(f"PicrawlerMotorService: obstacle at {ev.get('distance_cm', 0):.1f}cm — stop")

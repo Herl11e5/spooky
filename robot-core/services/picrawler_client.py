@@ -18,6 +18,8 @@ API:
     body.start()
     body.command("MOVE_FORWARD", speed=0.5, duration=1.0)
     body.move(vx=0.0, vyaw=0.4)          # streamed: re-send within 0.5 s
+    body.gesture("wave")                 # body poses, no steps; gestures() lists durations
+    body.look(yaw=10, pitch=5)           # lean the body toward a direction (no head)
     body.distance_cm(), body.heading_deg(), body.camera_rgb()
 """
 
@@ -47,6 +49,7 @@ class PicrawlerClient:
         self._active = False
         self._thread: Optional[threading.Thread] = None
         self._warned = False
+        self._gestures: dict[str, float] = {}
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
@@ -118,6 +121,22 @@ class PicrawlerClient:
         """Streamed intent (m/s, rad/s). The body stops by itself unless re-sent within 0.5 s."""
         return self._ok(self._request("POST", "/move", {"vx": vx, "vy": vy, "vyaw": vyaw,
                                                          "source": self._source}))
+
+    def gesture(self, name: str) -> bool:
+        return self._ok(self._request("POST", "/gesture", {"name": name, "source": self._source}))
+
+    def look(self, yaw: float = 0.0, pitch: float = 0.0) -> bool:
+        """Body yaw (> 0 left) and pitch (> 0 up), degrees, held until look(0, 0)."""
+        return self._ok(self._request("POST", "/look", {"yaw": yaw, "pitch": pitch,
+                                                         "source": self._source}))
+
+    def gestures(self) -> dict[str, float]:
+        """Gesture name → duration in seconds, as the body plays them (cached)."""
+        if not self._gestures:
+            reply = self._request("GET", "/gestures")
+            if isinstance(reply, dict):
+                self._gestures = {k: float(v) for k, v in reply.items()}
+        return self._gestures
 
     def enable(self) -> bool:
         return self._ok(self._request("POST", "/enable", {"source": self._source}))

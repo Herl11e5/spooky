@@ -68,6 +68,18 @@ class FakeBody:
             self._vyaw = 0.0
         return not self.refuse
 
+    def gesture(self, name):
+        self.calls.append(("gesture", name))
+        return not self.refuse
+
+    def gestures(self):
+        return {"wave": 2.75, "nod": 1.5, "shake": 1.25, "wiggle": 1.45, "bounce": 1.05,
+                "look_around": 3.6, "pat_desk": 2.4, "stretch": 2.2}
+
+    def look(self, yaw=0.0, pitch=0.0):
+        self.calls.append(("look", round(yaw, 2), round(pitch, 2)))
+        return not self.refuse
+
     def enable(self):
         self.calls.append(("enable",))
         return True
@@ -166,25 +178,44 @@ def test_turn_gives_up_when_the_body_refuses(clock):
 
 # ── looking without a head ────────────────────────────────────────────────────
 
-def test_look_at_turns_the_body_and_look_center_turns_back(clock):
-    motor, body, _ = motor_with(clock, heading=0.0)
-    motor.look_at(pan=30)
-    assert body.heading_deg() == pytest.approx(-30.0, abs=3.5)
-    assert motor.head_angles[0] == 30
+def test_head_looks_become_proportional_leans_and_never_turn(clock):
+    motor, body, _ = motor_with(clock, heading=0.0)      # spooky's limits: pan ±60, tilt -30..20
+    motor.look_at(pan=30, tilt=-15)
+    assert body.calls == [("look", -9.0, -5.0)]          # 30/60 of 18° right, 15/30 of 10° down
+    motor.look_at(pan=-60, tilt=20)
+    assert body.calls[-1] == ("look", 18.0, 10.0)       # each side of the range on its own
     motor.look_center()
-    assert body.heading_deg() == pytest.approx(0.0, abs=4.0)
+    assert body.calls[-1] == ("look", 0.0, 0.0)
+    assert body.heading_deg() == pytest.approx(0.0)      # no turning at all
+    assert motor.head_angles == (0, 0)
 
 
-def test_small_look_changes_do_not_move(clock):
+def test_a_quick_head_choreography_takes_no_steps(clock):
+    motor, body, _ = motor_with(clock, heading=0.0)
+    for pan in (30, -30, 30, -30, 0):                    # spooky's "excited"
+        motor.look_at(pan=pan, tilt=0)
+    assert set(body.actions()) == {"look"}
+
+
+def test_tilt_head_tilts_the_body(clock):
     motor, body, _ = motor_with(clock)
-    motor.look_at(pan=3)
-    assert body.calls == []
+    motor.tilt_head(20)
+    assert body.calls == [("look", 0.0, 10.0)]
 
 
-def test_nudge_toward_a_face_on_the_right_turns_right(clock):
+def test_nudge_toward_a_face_on_the_right_leans_right(clock):
     motor, body, _ = motor_with(clock)
     motor.nudge_toward(0.5, 0.0, gain=0.05)
-    assert body.calls[0][0] == "move" and body.calls[0][1] < 0
+    action, yaw, pitch = body.calls[0]
+    assert action == "look" and yaw < 0
+
+
+def test_nudge_beyond_the_lean_starts_turning(clock):
+    motor, body, _ = motor_with(clock)
+    for _ in range(20):
+        motor.nudge_toward(1.0, 0.0, gain=0.05)
+    assert any(c[0] == "move" and c[1] < 0 for c in body.calls)
+    assert all(abs(c[1]) <= 18.0 for c in body.calls if c[0] == "look")
 
 
 # ── the methods spooky's skills called but MotorService never had ─────────────
@@ -201,12 +232,16 @@ def test_every_skill_motor_call_exists(clock, call):
     call(motor)
 
 
-def test_wiggle_ends_where_it_started(clock):
+@pytest.mark.parametrize("method, gesture", [
+    ("wave", "wave"), ("shake_head", "shake"), ("nod", "nod"), ("wiggle_dance", "wiggle"),
+    ("spin_head", "look_around"), ("pat_desk", "pat_desk"), ("hop", "bounce"), ("stretch", "stretch"),
+])
+def test_expressive_moves_are_body_gestures(clock, method, gesture):
     motor, body, _ = motor_with(clock)
-    motor.wiggle_dance()
-    lefts = sum(c[2] for c in body.calls if c[0] == "TURN_LEFT")
-    rights = sum(c[2] for c in body.calls if c[0] == "TURN_RIGHT")
-    assert lefts == pytest.approx(rights) and body.actions()[-1] == "STOP"
+    t0 = clock.t
+    getattr(motor, method)()
+    assert body.calls == [("gesture", gesture)]
+    assert clock.t - t0 == pytest.approx(body.gestures()[gesture])   # waits like do_action()
 
 
 def test_stand_and_sit_enable_and_disable_the_body(clock):
