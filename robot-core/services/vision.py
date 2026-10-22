@@ -384,9 +384,14 @@ class EmbeddingRecognizer:
     """
 
     _SAME_PERSON = 0.363
+    _MAX_LOOKS = 40          # per person: the most varied ones are kept
+    _LEARN_EVERY_S = 30.0
 
     def __init__(self):
         self._means: Dict[str, np.ndarray] = {}
+        self._samples: Dict[str, np.ndarray] = {}
+        self._dirs: Dict[str, Path] = {}
+        self._learnt_at: Dict[str, float] = {}
         self._lock = threading.RLock()
 
     @staticmethod
@@ -396,6 +401,7 @@ class EmbeddingRecognizer:
     def enroll(self, person_id: str, embeddings: List[np.ndarray], save_dir: Path) -> None:
         stack = np.array([np.asarray(e, np.float32).ravel() for e in embeddings])
         np.save(save_dir / "embeddings.npy", stack)
+        self._dirs[person_id] = save_dir
         self._remember(person_id, stack)
 
     def load_embedding(self, person_id: str, person_dir: Path) -> bool:
@@ -403,6 +409,7 @@ class EmbeddingRecognizer:
         if not path.exists():
             return False
         try:
+            self._dirs[person_id] = person_dir
             self._remember(person_id, np.load(path))
             return True
         except Exception as e:
@@ -412,11 +419,41 @@ class EmbeddingRecognizer:
     def _remember(self, person_id: str, stack: np.ndarray) -> None:
         mean = stack.mean(axis=0)
         with self._lock:
+            self._samples[person_id] = stack
             self._means[person_id] = mean / (np.linalg.norm(mean) or 1.0)
+
+    def reinforce(self, person_id: str, embedding, now: Optional[float] = None) -> bool:
+        """
+        Learn a new look of someone recognised with confidence — another angle, other
+        light, glasses — so recognition improves the more spooky sees them. At most one
+        a person every 30 s; a look it already knows (cosine > 0.95) teaches nothing; past
+        40 looks, the most redundant one makes room.
+        """
+        now = time.time() if now is None else now
+        with self._lock:
+            stack = self._samples.get(person_id)
+            if stack is None or embedding is None or now - self._learnt_at.get(person_id, 0) < self._LEARN_EVERY_S:
+                return False
+            e = np.asarray(embedding, np.float32).ravel()
+            e = e / (np.linalg.norm(e) or 1.0)
+            norms = stack / np.maximum(np.linalg.norm(stack, axis=1, keepdims=True), 1e-9)
+            if float((norms @ e).max()) > 0.95:
+                return False
+            if len(stack) >= self._MAX_LOOKS:
+                redundancy = (norms @ norms.T).sum(axis=1)
+                stack = np.delete(stack, int(np.argmax(redundancy)), axis=0)
+            stack = np.vstack([stack, e])
+            self._remember(person_id, stack)
+            self._learnt_at[person_id] = now
+            folder = self._dirs.get(person_id)
+        if folder is not None:
+            np.save(folder / "embeddings.npy", stack)
+        return True
 
     def forget(self, person_id: str) -> None:
         with self._lock:
             self._means.pop(person_id, None)
+            self._samples.pop(person_id, None)
 
     def predict(self, embedding) -> Tuple[Optional[str], float]:
         with self._lock:
@@ -776,6 +813,8 @@ class VisionService:
         """
         best = self._track_ids.get(face["id"], (None, 0.0))
         person_id, conf = self._recognizer.predict(face.get("embedding"))
+        if person_id and conf >= 0.85 and isinstance(self._recognizer, EmbeddingRecognizer):
+            self._recognizer.reinforce(person_id, face.get("embedding"))   # learns as it goes
         if person_id is not None and conf > best[1]:
             best = (person_id, conf)
         self._track_ids[face["id"]] = best

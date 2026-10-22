@@ -155,6 +155,9 @@ class RobotRuntime:
         mem_cfg = cfg.get("memory", {})
         db_path = ROOT / mem_cfg.get("db_path", "data/memory.db")
         self._memory = MemoryService(self._bus, db_path=db_path)
+        from services.knowledge import KnowledgeService
+        self._knowledge = KnowledgeService(
+            self._bus, ROOT / cfg.get("knowledge.db_path", "data/knowledge.db"), cfg)
 
         # ── Audio ─────────────────────────────────────────────────────────────────
         self._audio = AudioService(self._bus, cfg)
@@ -173,6 +176,7 @@ class RobotRuntime:
             vision=self._vision,
             motor=self._motor,
             sensor=self._sensors,
+            knowledge=self._knowledge,
         )
         # Mind + summarizer share the same text-model lock (llama3.2)
         # Vision uses its own internal lock (moondream) — the two run independently
@@ -264,6 +268,7 @@ class RobotRuntime:
             audio        = self._audio,
             mind         = self._mind,
             sensor       = self._sensors,
+            knowledge    = self._knowledge,
         )
 
         # ── Subscribe to lifecycle events ─────────────────────────────────────
@@ -287,6 +292,7 @@ class RobotRuntime:
         self._safety.start()
         self._sensors.start()
         self._memory.start()
+        self._knowledge.start()
         self._audio.start()
         self._vision.start()
         self._conscience.start()
@@ -330,6 +336,7 @@ class RobotRuntime:
         self._social_memory.stop()
         self._conscience.stop()
         self._mind.stop()
+        self._knowledge.stop()
         self._audio.stop()
         self._vision.stop()
         self._sensors.stop()

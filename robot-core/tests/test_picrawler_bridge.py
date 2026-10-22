@@ -532,3 +532,19 @@ def test_droid_language_is_a_language():
     assert mood("I'm sorry.") == "sad" and mood("Good night.") == "sleepy"
     wav = render("Good evening!")
     assert wav.dtype.name == "int16" and 0.3 * RATE < len(wav) < 3 * RATE and abs(wav).max() > 20000
+
+
+def test_faces_are_learnt_as_they_are_seen(tmp_path):
+    rec = EmbeddingRecognizer()
+    folder = tmp_path / "p1"
+    folder.mkdir()
+    me = unit(1)
+    rec.enroll("p1", [me], folder)
+    assert rec.reinforce("p1", near(me, 2, 0.8), now=100.0)              # a new angle: learnt
+    assert not rec.reinforce("p1", near(me, 3, 0.8), now=110.0)          # too soon
+    assert not rec.reinforce("p1", me, now=200.0)                        # nothing new to learn
+    assert len(np.load(folder / "embeddings.npy")) == 2                  # saved
+    for i in range(60):
+        rec.reinforce("p1", near(me, 10 + i, 0.8), now=300.0 + 31 * i)
+    assert len(rec._samples["p1"]) == EmbeddingRecognizer._MAX_LOOKS
+    assert rec.predict(near(me, 999, 0.8))[0] == "p1"

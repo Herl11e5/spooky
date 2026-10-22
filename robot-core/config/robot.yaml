@@ -102,6 +102,19 @@ camera:
   fps: 30
   face_detect_interval_s: 0.25    # check for faces every N seconds
 
+# ── Knowledge: what it sees and hears, and what it learns (services/knowledge.py) ─
+knowledge:
+  db_path: "data/knowledge.db"
+  ambient: true                  # keep what is said around it, not only to it (dashboard switch)
+  embed_model: "embeddinggemma"  # on the Mac (OLLAMA_HOST): multilingual, finds memories by meaning
+  model: "gemma3:12b"            # distils the day into lasting facts
+  min_words: 3                   # shorter transcripts are mostly speech-recognition noise
+  keep_observations_h: 48        # raw text kept this long after it has been learnt from
+  recent_days: 2                 # recent observations recalled before they are consolidated
+  forget_after_days: 60          # facts never confirmed fade after this
+  consolidate_hour: 3            # its sleep
+  consolidate_when_pending: 300  # or sooner, when this many observations are waiting
+
 # ── Person recognition ────────────────────────────────────────────────────────
 face:
   db_path: "data/faces/"

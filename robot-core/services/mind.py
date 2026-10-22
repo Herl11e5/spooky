@@ -259,12 +259,14 @@ class MindService:
         vision=None,   # VisionService (optional, for enrollment + scene replies)
         motor=None,    # MotorService (optional, for scan)
         sensor=None,   # SensorService (optional, for scan)
+        knowledge=None,  # KnowledgeService (optional): what it has seen, heard and learnt
     ):
         self._bus    = bus
         self._mm     = mode_manager
         self._brain  = brain
         self._audio  = audio
         self._memory = memory
+        self._knowledge = knowledge
         self._cfg    = cfg
         self._vision = vision
         self._motor  = motor
@@ -348,8 +350,15 @@ class MindService:
             return
 
         if any(w in cmd_lo for w in ("cosa ricordi", "memoria", "ricordi")):
-            summary = self._memory.summary(5)
-            self._audio.say(summary or "I don't remember anything recent.")
+            facts = self._knowledge.facts(8) if self._knowledge else []
+            if not facts:
+                self._audio.say("I haven't learnt much yet. Give me a night's sleep.")
+                return
+            reply = self._think(
+                "Someone asks what you remember. Tell them two or three of these, in your own words.",
+                context="Things you have learnt:\n" + "\n".join(f"- {f['text']}" for f in facts),
+                trigger="memory")
+            self._audio.say(reply)
             return
 
         # "scansiona" — environment scan
@@ -574,6 +583,12 @@ class MindService:
     def _think(self, prompt: str, context: str = "", trigger: str = "") -> str:
         """Wrapper around brain.think() that publishes LLM_CALL event for dashboard visibility."""
         t0 = time.time()
+        if self._knowledge is not None:
+            memories = self._knowledge.recall(prompt)
+            if memories:
+                context = ((context + "\n\n") if context else "") + (
+                    "What you remember that may matter here (use it naturally, never list it):\n"
+                    + "\n".join(f"- {m}" for m in memories))
         reply = self._brain.think(prompt, context=context)
         ms = int((time.time() - t0) * 1000)
         fallback = reply in _FALLBACK_IT

@@ -15,6 +15,6 @@ audio:
   # Spooky speaks English (the Italian voices were unlistenable). Until a voice is chosen:
   # a young southern-English man from Piper's VCTK set, on the Pi itself. Or tts_method:
   # droid for spooky's own whistle-and-click language (services/droid_voice.py).
-  tts_method: piper
+  tts_method: droid
   piper_voice: en_GB-vctk-medium
   piper_speaker: p232

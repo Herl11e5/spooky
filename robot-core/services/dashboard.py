@@ -11,6 +11,8 @@ POST /api/command → inject command {"command": "..."}
 POST /api/enroll  → learn the face in view {"name": "..."}; GET → progress
 DELETE /api/persons/<id> → forget a person (face data and memory)
 GET  /api/faces   → body face track id → who spooky thinks it is
+GET  /api/knowledge → what it has learnt + stats; POST /api/knowledge/consolidate (sleep now),
+     POST /api/knowledge/ambient {"on"}, DELETE /api/knowledge/<id> (forget a fact)
 POST /api/mode    → switch mode    {"mode": "..."}
 POST /api/summarize
 GET  /stream      → SSE live events
@@ -73,7 +75,7 @@ class DashboardService:
     def __init__(self, bus, mode_manager, memory, alert_svc, conscience,
                  cmd_queue, cfg, night_watch=None, experiments=None,
                  summarizer=None, learning=None, vision=None, motor=None,
-                 audio=None, mind=None, sensor=None):
+                 audio=None, mind=None, sensor=None, knowledge=None):
         self._bus = bus
         self._mm = mode_manager
         self._memory = memory
@@ -90,6 +92,7 @@ class DashboardService:
         self._audio = audio
         self._mind = mind
         self._sensor = sensor
+        self._knowledge = knowledge
         self._last_scan: list = []
         self._host = cfg.get("dashboard.host", "0.0.0.0")
         self._port = int(cfg.get("dashboard.port", 5000))
@@ -252,9 +255,13 @@ class DashboardService:
 
         @app.route("/api/persons/<person_id>", methods=["DELETE"])
         def api_forget_person(person_id):
-            # The face data and the memory of the person both go.
+            # The face data, the memory of the person and what was learnt about them all go.
+            profile = self._memory.get_person(person_id) or {}
+            name = profile.get("display_name") or (self._vision._db.display_name(person_id) if self._vision else None)
             if self._vision is not None:
                 self._vision.forget_person(person_id)
+            if self._knowledge is not None and name:
+                self._knowledge.forget_person(name)
             self._memory.delete_person(person_id)
             return jsonify({"ok": True})
 
@@ -269,6 +276,34 @@ class DashboardService:
         @app.route("/api/enroll", methods=["GET"])
         def api_enroll_status():
             return jsonify(self._mind.enrollment if self._mind is not None else {})
+
+        @app.route("/api/knowledge")
+        def api_knowledge():
+            if self._knowledge is None:
+                return jsonify({"error": "no knowledge service"}), 404
+            limit = int(request.args.get("limit", 30))
+            return jsonify({"stats": self._knowledge.stats(), "facts": self._knowledge.facts(limit)})
+
+        @app.route("/api/knowledge/consolidate", methods=["POST"])
+        def api_consolidate():
+            if self._knowledge is None:
+                return jsonify({"ok": False}), 404
+            self._knowledge.request_consolidation()
+            return jsonify({"ok": True})
+
+        @app.route("/api/knowledge/ambient", methods=["POST"])
+        def api_ambient():
+            if self._knowledge is None:
+                return jsonify({"ok": False}), 404
+            self._knowledge.set_ambient(bool((request.get_json(silent=True) or {}).get("on")))
+            return jsonify({"ok": True, "ambient": self._knowledge.ambient})
+
+        @app.route("/api/knowledge/<int:fact_id>", methods=["DELETE"])
+        def api_forget_fact(fact_id):
+            if self._knowledge is None:
+                return jsonify({"ok": False}), 404
+            self._knowledge.forget_fact(fact_id)
+            return jsonify({"ok": True})
 
         @app.route("/api/faces")
         def api_faces():
