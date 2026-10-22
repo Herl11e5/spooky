@@ -57,6 +57,7 @@ class AudioOutput:
     """
 
     M_PIPER         = "piper"
+    M_DROID         = "droid"     # spooky's own whistle-and-click language (services/droid_voice.py)
     M_ESPEAK_APLAY  = "espeak_aplay"
     M_ESPEAK_PAPLAY = "espeak_paplay"
     M_PYTTSX3       = "pyttsx3"
@@ -73,9 +74,11 @@ class AudioOutput:
     _PIPER_VOICES_DIR = "~/piper-voices"
 
     def __init__(self, bus: EventBus, language: str = "it", method: str = "auto",
-                 speaker_pin: Optional[int] = None, piper_voice: Optional[str] = None):
+                 speaker_pin: Optional[int] = None, piper_voice: Optional[str] = None,
+                 piper_speaker: Optional[str] = None):
         self._bus        = bus
         self._piper_voice = piper_voice or self._PIPER_VOICE
+        self._piper_speaker = piper_speaker   # multi-speaker voices (VCTK: p232, …)
         self._lang       = language
         self._lock       = threading.Lock()
         self._aplay_dev  = self._detect_aplay_device()   # best non-HDMI card
@@ -178,6 +181,8 @@ class AudioOutput:
     def _speak(self, text: str, wav_path: str) -> None:
         if self._method == self.M_PIPER:
             self._piper_speak(text, wav_path)
+        elif self._method == self.M_DROID:
+            self._droid_speak(text, wav_path)
         elif self._method == self.M_ESPEAK_APLAY:
             self._espeak_aplay(text, wav_path)
         elif self._method == self.M_ESPEAK_PAPLAY:
@@ -201,7 +206,11 @@ class AudioOutput:
             voice = self._piper
             with _wave.open(wav_path, "wb") as wf:
                 if hasattr(voice, "synthesize_wav"):      # piper-tts ≥ 1.3
-                    voice.synthesize_wav(text, wf)
+                    syn = None
+                    if self._piper_speaker:
+                        from piper import SynthesisConfig
+                        syn = SynthesisConfig(speaker_id=voice.config.speaker_id_map[self._piper_speaker])
+                    voice.synthesize_wav(text, wf, syn_config=syn)
                 else:
                     wf.setnchannels(1)
                     wf.setsampwidth(2)
@@ -211,6 +220,17 @@ class AudioOutput:
         except Exception as e:
             log.warning(f"piper: {e} — using espeak-ng")
             self._espeak_aplay(text, wav_path)
+
+    def _droid_speak(self, text: str, wav_path: str) -> None:
+        """Spooky's own language: the words become whistles and clicks; the text stays in the chat."""
+        import wave as _wave
+        from services.droid_voice import RATE, render
+        with _wave.open(wav_path, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(RATE)
+            wf.writeframes(render(text).tobytes())
+        self._play_wav(wav_path)
 
     def _play_wav(self, wav_path: str) -> None:
         """Play a WAV file via the best available ALSA device."""
@@ -582,7 +602,8 @@ class AudioService:
 
         self._out = AudioOutput(bus, language=lang, method=tts_method,
                                 speaker_pin=audio_cfg.get("speaker_enable_pin"),
-                                piper_voice=audio_cfg.get("piper_voice"))
+                                piper_voice=audio_cfg.get("piper_voice"),
+                                piper_speaker=audio_cfg.get("piper_speaker"))
         self._inp = AudioInput(
             bus,
             wake_word=wake_word,

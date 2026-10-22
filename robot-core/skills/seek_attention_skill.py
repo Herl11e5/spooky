@@ -75,7 +75,7 @@ class SeekAttentionSkill(Skill):
 
             if elapsed > max_duration:
                 log.info("SeekAttentionSkill: timeout, giving up")
-                self._audio.say("Ok, continuo da solo.")
+                self._audio.say("Okay, I'll carry on by myself.")
                 break
 
             # Update attention level based on time
@@ -108,7 +108,7 @@ class SeekAttentionSkill(Skill):
     def _on_person_responds(self, event_data: dict) -> None:
         """Person responded! Skill's work is done."""
         log.info("SeekAttentionSkill: person responded!")
-        self._audio.say("Finalmente! Mi dicevi di fare?")
+        self._audio.say("Finally! What did you want me to do?")
         self.stop()
 
     def _on_mode(self, event_data: dict) -> None:
@@ -148,7 +148,7 @@ class SeekAttentionSkill(Skill):
         if hasattr(self._motor, "pat_desk"):
             self._motor.pat_desk()
 
-        self._audio.say("Pssst! Sono qui!")
+        self._audio.say("Psst! Over here!")
         self.sleep(0.5)
 
     def _seek_level_3(self) -> None:
@@ -165,7 +165,7 @@ class SeekAttentionSkill(Skill):
             self.sleep(0.15)
 
         # Plea
-        self._audio.say("Ehi! Guarda qua! Mi ascolta?")
+        self._audio.say("Hey! Look over here! Is anyone listening?")
         self.sleep(0.5)
 
         # One more dance for emphasis

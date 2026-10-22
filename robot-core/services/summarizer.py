@@ -222,14 +222,15 @@ class Summarizer:
                 for ep in episodes[:15]
             )
             prompt = (
-                f"Riassumi questi eventi del robot Spooky in 1-2 frasi italiane concise. "
+                f"Summarise these events of the robot Spooky in one or two short English sentences, "
+                f"plain words, no emoji. "
                 f"Contesto: {context}.\n\nEventi:\n{episode_text}"
             )
             resp = ollama.chat(
                 model=self._llm_model,
                 messages=[{"role": "user", "content": prompt}],
                 options={"temperature": 0.3, "num_predict": 80},
-                keep_alive=0,
+                keep_alive=600,   # the same model the mind uses on the Mac: keep it loaded
             )
             text = resp.message.content.strip() if hasattr(resp, "message") \
                    else resp["message"]["content"].strip()

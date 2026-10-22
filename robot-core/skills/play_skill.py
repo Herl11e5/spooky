@@ -138,7 +138,7 @@ class PlaySkill(Skill):
         # Quickly back up
         if hasattr(self._motor, "tilt_head"):
             self._motor.tilt_head(10)
-            self._audio.say("Ciao!")
+            self._audio.say("Hi!")
             self.sleep(0.2)
 
     def _head_spin(self) -> None:
@@ -168,11 +168,11 @@ class PlaySkill(Skill):
     def _tell_joke(self) -> None:
         """Tell a simple joke or funny observation."""
         jokes = [
-            "Sai qual è il ragno più veloce? Quello che ha i riflessi pronti! *clic clic*",
-            "Perché i ragni non vanno mai al cinema? Perché preferiscono stare sul web!",
-            "Quante zampe servono a un ragno per ballare? Tutte! *Si danno una spinnata*",
-            "Mi sento un po' web-stanco oggi.",
-            "Ho visto una mosca vicino. Per un attimo ho pensato fosse un'occasione!",
+            "Why are spiders such good programmers? They're great at finding bugs.",
+            "I'd tell you a joke about my web, but it's still loading.",
+            "How many legs does a spider need to dance? All eight, and a good beat.",
+            "I feel a little web-tired today.",
+            "I saw a fly nearby. For a second I thought it was an opportunity.",
         ]
         joke = random.choice(jokes)
         self._audio.say(joke)
@@ -188,7 +188,7 @@ class PlaySkill(Skill):
 
             # Quick backward
             self._motor.move_backward(distance=30, speed=100)
-            self._audio.say("Scherzo!")
+            self._audio.say("Just kidding!")
             self.sleep(0.2)
 
     def _wiggle_dance(self) -> None:

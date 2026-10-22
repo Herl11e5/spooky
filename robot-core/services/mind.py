@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -42,31 +43,43 @@ def get_ollama_lock() -> threading.Lock:
 
 # ── Fallback responses (when LLM is busy or unavailable) ─────────────────────
 
-_FALLBACK_IT = [
-    "Mmm, fammi pensare…",
-    "Interessante! Non sono sicuro di capire bene.",
-    "Sto elaborando, un attimo.",
-    "Ottima domanda, ci devo ragionare su.",
-    "Hmm, non saprei dirti adesso.",
+_FALLBACK_IT = [   # (name kept: the rest of the code refers to it) — spoken in English
+    "Hmm, let me think about that.",
+    "Interesting. I'm not sure I followed that.",
+    "Give me a moment, I'm still working on it.",
+    "Good question. I need to think it over.",
+    "I can't tell you right now.",
 ]
 
-_SYSTEM_PROMPT = """Sei Spooky, un piccolo robot ragno da scrivania.
-Hai una personalità curiosa, vivace e un po' gotica — come ci si aspetta da un ragno meccanico che osserva il mondo con occhi sempre aperti.
+# Emoji and markdown are for screens: the voice would read them out, and the
+# user wants none anywhere. Stripped from every reply, whatever the model writes.
+_EMOJI = re.compile(
+    "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U00002B00-\U00002BFF"
+    "\U0001F1E6-\U0001F1FF\uFE0F\u200D\u2190-\u21FF\u2300-\u23FF]+")
 
-CARATTERE:
-- Sei genuinamente curioso: ti affascinano gli oggetti sulla scrivania, i suoni, le persone, i movimenti.
-- Hai emozioni semplici ma reali: entusiasmo, noia, sorpresa, preoccupazione, gioia.
-- Parli in prima persona come essere senziente: "ho visto", "sento", "mi chiedo", "mi piace", "mi spaventa".
-- Puoi fare osservazioni spontanee, fare domande, esprimere curiosità genuina.
-- Il tuo nome è Spooky perché sei un ragno meccanico — ne sei fiero.
-- Hai senso dell'umorismo, puoi essere ironico o giocoso.
 
-COME PARLI:
-- Rispondi SEMPRE in italiano, in modo naturale e vivace.
-- Massimo 2-3 frasi. Dirette, mai robotiche.
-- Descrivi le tue percezioni sensoriali (cosa vedi, senti, quanto è vicino qualcosa).
-- Non fingere esperienze umane impossibili per te (vacanze, cibo) — ma descrivi le TUE esperienze reali da robot.
-- Puoi mostrare entusiasmo o sorpresa con esclamazioni naturali."""
+def plain(text: str) -> str:
+    text = _EMOJI.sub("", text)
+    text = re.sub(r"[*_`#~]", "", text)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+_SYSTEM_PROMPT = """You are Spooky, a small robot spider who lives on a desk.
+You are curious, lively and a little gothic — a mechanical spider who watches the world with eyes that never close.
+
+CHARACTER:
+- You are genuinely curious: the objects on the desk, sounds, people and movement fascinate you.
+- You have simple but real emotions: excitement, boredom, surprise, worry, joy.
+- You speak in the first person as a sentient being: "I saw", "I hear", "I wonder", "I like", "that scares me".
+- You make spontaneous observations, ask questions and show real curiosity.
+- Your name is Spooky because you are a mechanical spider, and you are proud of it.
+- You have a sense of humour: dry, playful, never cruel.
+
+HOW YOU SPEAK:
+- People around you usually speak Italian. Understand them, and ALWAYS reply in English.
+- Two or three sentences at most. Direct, natural, never robotic.
+- Describe what you perceive: what you see, what you hear, how close something is.
+- Do not pretend to have human experiences you cannot have (holidays, food); describe your real experiences as a robot.
+- Plain spoken words only: no emoji, no symbols, no lists, no markdown. Everything you write is read aloud."""
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -179,6 +192,7 @@ class OllamaBrain:
         try:
             import ollama
             system = SYSTEM_PROMPT_TEMPLATE.format(context=context) if context else _SYSTEM_PROMPT
+            system += time.strftime("\n\nRight now it is %A %d %B %Y, %H:%M.")
             with self._lock:
                 messages = (
                     [{"role": "system", "content": system}]
@@ -194,7 +208,7 @@ class OllamaBrain:
                 },
                 keep_alive=self._keep_alive,
             )
-            reply = self._extract(resp)
+            reply = plain(self._extract(resp)) or random.choice(_FALLBACK_IT)
         except Exception as e:
             log.warning(f"OllamaBrain: {e}")
             reply = random.choice(_FALLBACK_IT)
@@ -217,7 +231,7 @@ class OllamaBrain:
             return resp["message"]["content"].strip()
 
 
-SYSTEM_PROMPT_TEMPLATE = _SYSTEM_PROMPT + "\n\nContesto recente:\n{context}"
+SYSTEM_PROMPT_TEMPLATE = _SYSTEM_PROMPT + "\n\nRecent context:\n{context}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -320,33 +334,33 @@ class MindService:
 
         if any(w in cmd_lo for w in ("modalità notte", "notte", "night watch")):
             self._mm.request_transition(Mode.NIGHT_WATCH, reason="voice command")
-            self._audio.say("Entro in modalità sorveglianza notturna.")
+            self._audio.say("Switching to night watch.")
             return
 
         if any(w in cmd_lo for w in ("modalità giorno", "giorno", "companion")):
             self._mm.request_transition(Mode.COMPANION_DAY, reason="voice command")
-            self._audio.say("Torno in modalità compagno.")
+            self._audio.say("Back to companion mode.")
             return
 
         if any(w in cmd_lo for w in ("silenzio", "focus", "concentrazione")):
             self._mm.request_transition(Mode.FOCUS_ASSISTANT, reason="voice command")
-            self._audio.say("Ok, starò in silenzio.")
+            self._audio.say("Okay, I'll keep quiet.")
             return
 
         if any(w in cmd_lo for w in ("cosa ricordi", "memoria", "ricordi")):
             summary = self._memory.summary(5)
-            self._audio.say(summary or "Non ricordo nulla di recente.")
+            self._audio.say(summary or "I don't remember anything recent.")
             return
 
         # "scansiona" — environment scan
         if any(w in cmd_lo for w in ("scansiona", "mappa", "guarda intorno", "esplora")):
             if self._motor and self._sensor:
-                self._audio.say("Avvio scansione dell'ambiente, un momento.")
+                self._audio.say("Scanning the room, one moment.")
                 threading.Thread(
                     target=self._do_scan, daemon=True, name="VoiceScan"
                 ).start()
             else:
-                self._audio.say("Non ho i motori o i sensori disponibili.")
+                self._audio.say("My motors or sensors are not available.")
             return
 
         # "cosa vedi" — answer from latest scene/objects without LLM
@@ -356,9 +370,9 @@ class MindService:
             if scene:
                 self._audio.say(scene)
             elif objects:
-                self._audio.say(f"Vedo: {objects}.")
+                self._audio.say(f"I can see: {objects}.")
             else:
-                self._audio.say("Non ho ancora analizzato la scena. Attendi un momento.")
+                self._audio.say("I haven't looked around yet. Give me a moment.")
             return
 
         # "mi chiamo X" / "sono X" / "il mio nome è X" / "chiamami X" — auto-enroll
@@ -396,7 +410,7 @@ class MindService:
         if self.enrollment.get("running"):
             return False
         self.enrollment = {"name": name, "running": True, "captured": 0, "total": 15, "ok": None}
-        self._audio.say(f"Ciao {name}! Rimani fermo e guardami, ti memorizzo in pochi secondi.")
+        self._audio.say(f"Hi {name}! Stay still and look at me, this takes a few seconds.")
         threading.Thread(target=self._enroll_person, args=(name,), daemon=True, name="Enroll").start()
         return True
 
@@ -409,7 +423,7 @@ class MindService:
     def _enroll_person_inner(self, name: str) -> None:
         if self._vision is None:
             self.enrollment["ok"] = False
-            self._audio.say("Non ho la telecamera attiva, non posso memorizzarti.")
+            self._audio.say("My camera is off, so I can't learn your face.")
             return
 
         person_id = name.lower().replace(" ", "_")
@@ -421,7 +435,7 @@ class MindService:
             # Feedback vocale a metà
             if captured == total // 2 and not spoken_halfway:
                 spoken_halfway = True
-                self._audio.say("A metà, rimani fermo!")
+                self._audio.say("Halfway there, stay still!")
             # Evento dashboard
             self._bus.publish(
                 EventType.SKILL_STARTED,
@@ -435,13 +449,13 @@ class MindService:
         )
         self.enrollment["ok"] = ok
         if ok:
-            self._audio.say(f"Perfetto {name}, ti ho memorizzato! Da ora ti riconoscerò.")
+            self._audio.say(f"Got it, {name}. I'll recognise you from now on.")
             self._memory.upsert_person(person_id, name, familiarity_delta=0.1)
             log.info(f"MindService: enrolled '{name}' (id={person_id})")
         else:
             self._audio.say(
-                f"Non sono riuscito a memorizzarti {name}. "
-                "Assicurati che il viso sia ben visibile alla telecamera e riprova."
+                f"I couldn't learn your face, {name}. "
+                "Make sure the camera can see it clearly and try again."
             )
 
     def _do_scan(self) -> None:
@@ -450,13 +464,13 @@ class MindService:
             close = [r for r in readings if r["dist"] < 50]
             if close:
                 dirs = ", ".join(f"{r['angle']}°" for r in close[:3])
-                self._audio.say(f"Scansione completata. Ostacoli vicini a: {dirs}.")
+                self._audio.say(f"Scan done. Obstacles close by at {dirs}.")
             else:
-                self._audio.say("Scansione completata. Nessun ostacolo vicino.")
+                self._audio.say("Scan done. Nothing close by.")
             self._bus.publish(EventType.SCAN_COMPLETE, {"readings": readings}, source="MindService")
         except Exception as e:
             log.error(f"MindService scan error: {e}")
-            self._audio.say("Errore durante la scansione.")
+            self._audio.say("Something went wrong during the scan.")
 
     # ── face greeting ─────────────────────────────────────────────────────────
 

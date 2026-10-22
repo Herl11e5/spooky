@@ -515,3 +515,20 @@ def test_a_forgotten_person_is_a_stranger_again(vision):
     assert "p1" not in v._db.all_persons() and not (Path(v._db._root) / "p1").exists()
     v._process_body_faces(snap(face(4, near(me, 3))))
     assert not bus.of(EventType.PERSON_IDENTIFIED)
+
+
+def test_replies_are_plain_spoken_words():
+    from services.mind import plain
+    assert plain("Ciao! Sono Spooky ✨🕷️ e **sono** curioso 👀") == "Ciao! Sono Spooky e sono curioso"
+    assert plain("I'm fine, thanks! 😊") == "I'm fine, thanks!"
+    assert plain("Caffè, perché, città — tutto a posto.") == "Caffè, perché, città — tutto a posto."
+
+
+def test_droid_language_is_a_language():
+    from services.droid_voice import RATE, mood, render
+    assert (render("Hello there") == render("Hello there")).all()        # same words, same sounds
+    assert len(render("Hi")) < len(render("Hi, how are you doing today?"))
+    assert mood("Watch out, too close!") == "alert" and mood("Where are you?") == "question"
+    assert mood("I'm sorry.") == "sad" and mood("Good night.") == "sleepy"
+    wav = render("Good evening!")
+    assert wav.dtype.name == "int16" and 0.3 * RATE < len(wav) < 3 * RATE and abs(wav).max() > 20000

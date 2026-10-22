@@ -157,7 +157,7 @@ class NightWatchService:
         self._choreo.play("sleep_pose")
 
         if not self._silent:
-            self._audio.say("Modalità sorveglianza notturna attivata. Buonanotte.")
+            self._audio.say("Night watch on. Good night.")
         else:
             log.info("NightWatch: silent mode — no TTS")
 
@@ -195,7 +195,7 @@ class NightWatchService:
         )
 
         if not self._silent:
-            self._audio.say(f"Buongiorno! {summary}")
+            self._audio.say(f"Good morning! {summary}")
         else:
             log.info(f"NightWatch summary: {summary}")
 
@@ -248,6 +248,14 @@ class NightWatchService:
             f"NightWatch response complete L{level} "
             f"(snapshot={'yes' if entry.snapshot_path else 'no'})"
         )
+
+    @staticmethod
+    def _build_alert_message(level: int, reason: str, payload: Dict[str, Any]) -> str:
+        """What the robot says out loud on a level-2+ alert (it was called but never defined)."""
+        what = reason.replace("_", " ")
+        if level >= 3:
+            return f"Alert! {what}. I've taken a picture."
+        return f"I noticed something: {what}."
 
     # ── snapshot ──────────────────────────────────────────────────────────────
 
