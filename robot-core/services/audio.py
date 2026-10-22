@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import struct
 import subprocess
 import tempfile
 import threading
@@ -71,14 +72,36 @@ class AudioOutput:
     _PIPER_VOICE     = "it_IT-riccardo-x_low"
     _PIPER_VOICES_DIR = "~/piper-voices"
 
-    def __init__(self, bus: EventBus, language: str = "it", method: str = "auto"):
+    def __init__(self, bus: EventBus, language: str = "it", method: str = "auto",
+                 speaker_pin: Optional[int] = None):
         self._bus        = bus
         self._lang       = language
         self._lock       = threading.Lock()
         self._aplay_dev  = self._detect_aplay_device()   # best non-HDMI card
         self._method     = self._detect(method)
         self._engine     = None   # pyttsx3 instance if used
+        self._piper      = None   # loaded once: ~1-2 s per load on the Pi
+        if speaker_pin is not None:
+            self._enable_speaker(int(speaker_pin))
         log.info(f"AudioOutput: method={self._method}, aplay_dev={self._aplay_dev}")
+
+    def _enable_speaker(self, pin: int) -> None:
+        """
+        The Robot HAT's amplifier is off until its enable pin is driven high — what
+        SunFounder's robot_hat.enable_speaker() does. Then a moment of silence, as
+        it does too, so the DAC is not left feeding the amplifier noise.
+        """
+        try:
+            subprocess.run(["pinctrl", "set", str(pin), "op", "dh"], check=True,
+                           capture_output=True, timeout=3)
+            if self._aplay_dev:
+                silence = struct.pack("<4sI4s4sIHHIIHH4sI", b"RIFF", 36 + 16000, b"WAVE", b"fmt ", 16,
+                                      1, 1, 16000, 32000, 2, 16, b"data", 16000) + bytes(16000)
+                subprocess.run(["aplay", "-q", "-D", self._aplay_dev, "-"], input=silence,
+                               capture_output=True, timeout=5)
+            log.info(f"AudioOutput: speaker amplifier on (GPIO{pin})")
+        except Exception as e:
+            log.warning(f"AudioOutput: could not switch the speaker on (GPIO{pin}): {e}")
 
     @staticmethod
     def _detect_aplay_device() -> Optional[str]:
@@ -168,16 +191,21 @@ class AudioOutput:
         try:
             import wave as _wave
             from piper.voice import PiperVoice
-            voices_dir = Path(self._PIPER_VOICES_DIR).expanduser()
-            model_onnx = voices_dir / f"{self._PIPER_VOICE}.onnx"
-            if not model_onnx.exists():
-                raise FileNotFoundError(f"Piper model missing: {model_onnx}")
-            voice = PiperVoice.load(str(model_onnx), use_cuda=False)
+            if self._piper is None:
+                voices_dir = Path(self._PIPER_VOICES_DIR).expanduser()
+                model_onnx = voices_dir / f"{self._PIPER_VOICE}.onnx"
+                if not model_onnx.exists():
+                    raise FileNotFoundError(f"Piper model missing: {model_onnx}")
+                self._piper = PiperVoice.load(str(model_onnx), use_cuda=False)
+            voice = self._piper
             with _wave.open(wav_path, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(voice.config.sample_rate)
-                voice.synthesize(text, wf)
+                if hasattr(voice, "synthesize_wav"):      # piper-tts ≥ 1.3
+                    voice.synthesize_wav(text, wf)
+                else:
+                    wf.setnchannels(1)
+                    wf.setsampwidth(2)
+                    wf.setframerate(voice.config.sample_rate)
+                    voice.synthesize(text, wf)
             self._play_wav(wav_path)
         except Exception as e:
             log.warning(f"piper: {e} — using espeak-ng")
@@ -551,7 +579,8 @@ class AudioService:
         device       = audio_cfg.get("mic_device", None)   # None = sounddevice default
         cmd_timeout  = audio_cfg.get("command_timeout_s", 3.0)
 
-        self._out = AudioOutput(bus, language=lang, method=tts_method)
+        self._out = AudioOutput(bus, language=lang, method=tts_method,
+                                speaker_pin=audio_cfg.get("speaker_enable_pin"))
         self._inp = AudioInput(
             bus,
             wake_word=wake_word,

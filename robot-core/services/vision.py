@@ -414,6 +414,10 @@ class EmbeddingRecognizer:
         with self._lock:
             self._means[person_id] = mean / (np.linalg.norm(mean) or 1.0)
 
+    def forget(self, person_id: str) -> None:
+        with self._lock:
+            self._means.pop(person_id, None)
+
     def predict(self, embedding) -> Tuple[Optional[str], float]:
         with self._lock:
             if not self._means or embedding is None:
@@ -751,6 +755,19 @@ class VisionService:
                               source="VisionService")
         else:
             self._bus.publish(EventType.PERSON_UNKNOWN, base_payload, source="VisionService")
+
+    def track_identities(self) -> Dict[int, dict]:
+        """Who each of the body's face tracks is, as far as spooky knows (for the dashboard)."""
+        return {tid: {"person_id": pid, "name": (self._db.display_name(pid) or pid) if pid else None,
+                      "confidence": round(conf, 3), "known": bool(pid) and conf >= self._conf_high}
+                for tid, (pid, conf) in list(self._track_ids.items())}
+
+    def forget_person(self, person_id: str) -> None:
+        """Delete a person's face data; with a body, also from the live recognizer."""
+        self._db.delete_person(person_id)
+        if isinstance(self._recognizer, EmbeddingRecognizer):
+            self._recognizer.forget(person_id)
+        self._track_ids.clear()
 
     def _identify(self, face: dict) -> Tuple[Optional[str], float]:
         """

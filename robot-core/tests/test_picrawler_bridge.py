@@ -495,3 +495,23 @@ def test_a_face_kept_by_the_body_is_not_in_view(vision):
     v._process_body_faces(snap({**face(4, unit(5)), "age_s": 0.0}))   # back, same track
     assert bus.of(EventType.PERSON_IDENTIFIED)[-1]["track_id"] == 4
     assert len(bus.of(EventType.PERSON_IDENTIFIED)) == 2      # still known, though this look is poor
+
+
+def test_dashboard_sees_who_each_track_is(vision):
+    v, _, _, _ = vision
+    me = unit(1)
+    v._db.enroll_person("p1", "Samuele", [me], v._recognizer)
+    v._process_body_faces(snap(face(4, near(me, 3))))
+    ids = v.track_identities()
+    assert ids[4]["name"] == "Samuele" and ids[4]["known"]
+
+
+def test_a_forgotten_person_is_a_stranger_again(vision):
+    v, bus, _, _ = vision
+    from core.bus import EventType
+    me = unit(1)
+    v._db.enroll_person("p1", "Samuele", [me], v._recognizer)
+    v.forget_person("p1")
+    assert "p1" not in v._db.all_persons() and not (Path(v._db._root) / "p1").exists()
+    v._process_body_faces(snap(face(4, near(me, 3))))
+    assert not bus.of(EventType.PERSON_IDENTIFIED)

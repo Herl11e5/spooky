@@ -54,6 +54,7 @@ llm:
   # Priority list — first available model wins
   # RPi 5 8 GB: llama3.2:3b (~2 GB) is the sweet spot
   model_priority:
+    - "gemma3:12b"             # on the Mac (OLLAMA_HOST): good Italian, also sees images
     - "llama3.2:3b"
     - "llama3.2"
     - "mistral:7b"
@@ -65,16 +66,17 @@ llm:
   temperature: 0.70
   max_tokens: 200
   repeat_penalty: 1.1
-  keep_alive_s: 180           # keep model loaded longer (8 GB can afford it)
+  keep_alive_s: 600           # on the Mac: stays loaded between conversations
   min_ram_mb_to_infer: 600   # lowered — 8 GB has plenty of headroom
 
 # ── Vision LLM ────────────────────────────────────────────────────────────────
 vision_llm:
   model_priority:
-    - "moondream"
+    - "gemma3:12b"             # the same model as the mind: one load, and it reads Italian scenes well
     - "llava:7b"
     - "llava"
-  keep_alive_s: 0             # always unload immediately → free 1.7–5 GB
+    - "moondream"              # last: it answers "!!!" and "urn, base, stem"
+  keep_alive_s: 600           # shared with the mind on the Mac: unloading it would cost both a reload
   scene_interval_s: 120
   object_interval_s: 150
   image_width: 320

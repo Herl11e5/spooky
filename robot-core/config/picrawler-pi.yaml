@@ -1,0 +1,14 @@
+# Spooky as the brain of the picrawler body, on the same Pi (deploy/spooky-brain.service).
+# The body (picrawler.service) owns the servos, the camera and the sonar; spooky reaches
+# it on localhost. The language and vision models run on the Mac: OLLAMA_HOST in the unit.
+body:
+  backend: picrawler
+  url: "http://localhost:8000"
+
+dashboard:
+  host: "127.0.0.1"          # the body's dashboard (:8000) shows the brain too
+  port: 5000
+
+audio:
+  mic_device: "USB PnP Sound Device"   # the USB microphone (sounddevice matches by name)
+  speaker_enable_pin: 20               # Robot HAT amplifier enable (robot_hat: spk_en)

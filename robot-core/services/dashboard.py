@@ -8,6 +8,9 @@ GET  /api/persons → known persons
 GET  /api/memory  → episodes + facts
 GET  /api/alerts  → night watch alerts
 POST /api/command → inject command {"command": "..."}
+POST /api/enroll  → learn the face in view {"name": "..."}; GET → progress
+DELETE /api/persons/<id> → forget a person (face data and memory)
+GET  /api/faces   → body face track id → who spooky thinks it is
 POST /api/mode    → switch mode    {"mode": "..."}
 POST /api/summarize
 GET  /stream      → SSE live events
@@ -127,6 +130,7 @@ class DashboardService:
         
         app = Flask(__name__, static_folder=static_path, static_url_path='/')
         app.logger.setLevel(logging.ERROR)
+        logging.getLogger("werkzeug").setLevel(logging.WARNING)   # no line per poll
 
         @app.route("/")
         @app.route("/<path:path>")
@@ -246,6 +250,32 @@ class DashboardService:
         def api_persons():
             return jsonify(self._memory.all_persons())
 
+        @app.route("/api/persons/<person_id>", methods=["DELETE"])
+        def api_forget_person(person_id):
+            # The face data and the memory of the person both go.
+            if self._vision is not None:
+                self._vision.forget_person(person_id)
+            self._memory.delete_person(person_id)
+            return jsonify({"ok": True})
+
+        @app.route("/api/enroll", methods=["POST"])
+        def api_enroll():
+            name = ((request.get_json(silent=True) or {}).get("name") or "").strip()
+            if not name or self._mind is None:
+                return jsonify({"ok": False, "error": "name required"}), 400
+            ok = self._mind.enroll(name[:40].title())
+            return jsonify({"ok": ok, "enrollment": self._mind.enrollment})
+
+        @app.route("/api/enroll", methods=["GET"])
+        def api_enroll_status():
+            return jsonify(self._mind.enrollment if self._mind is not None else {})
+
+        @app.route("/api/faces")
+        def api_faces():
+            # Body track id → who spooky thinks it is.
+            ids = self._vision.track_identities() if self._vision is not None else {}
+            return jsonify({str(k): v for k, v in ids.items()})
+
         @app.route("/api/memory")
         def api_memory():
             return jsonify({"episodes": self._memory.recent_episodes(20),
@@ -286,8 +316,9 @@ class DashboardService:
             cmd = (data.get("command") or "").strip()
             if not cmd:
                 return jsonify({"error": "no command"}), 400
-            self._cmd_q.put(cmd)
-            shared.add_chat("user", cmd)
+            # The same path as a spoken command: the mind listens for COMMAND_PARSED
+            # (nothing ever read the old queue), and the chat records it from there.
+            self._bus.publish(EventType.COMMAND_PARSED, {"command": cmd}, source="Dashboard")
             return jsonify({"ok": True})
 
         @app.route("/api/mode", methods=["POST"])

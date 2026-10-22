@@ -264,6 +264,7 @@ class MindService:
         # State
         self._last_greeted: Dict[str, float] = {}
         self._last_thought: float = 0.0
+        self.enrollment: Dict[str, object] = {}   # progress of the current/last enrollment
         self._active = False
         self._thought_thread: Optional[threading.Thread] = None
 
@@ -372,16 +373,7 @@ class MindService:
         ]
         m = next((_re.search(p, cmd_lo) for p in _enroll_patterns if _re.search(p, cmd_lo)), None)
         if m:
-            name = m.group(1).strip().title()
-            self._audio.say(
-                f"Ciao {name}! Rimani fermo e guardami, ti memorizzo in pochi secondi."
-            )
-            threading.Thread(
-                target=self._enroll_person,
-                args=(name,),
-                daemon=True,
-                name="Enroll",
-            ).start()
+            self.enroll(m.group(1).strip().title())
             return
 
         # LLM response — clear history first if it's gotten too long (prevents drift)
@@ -399,8 +391,24 @@ class MindService:
             mode=self._mm.current.value,
         )
 
+    def enroll(self, name: str) -> bool:
+        """Learn the face in front of the camera as `name` (voice "mi chiamo …" or the dashboard)."""
+        if self.enrollment.get("running"):
+            return False
+        self.enrollment = {"name": name, "running": True, "captured": 0, "total": 15, "ok": None}
+        self._audio.say(f"Ciao {name}! Rimani fermo e guardami, ti memorizzo in pochi secondi.")
+        threading.Thread(target=self._enroll_person, args=(name,), daemon=True, name="Enroll").start()
+        return True
+
     def _enroll_person(self, name: str) -> None:
+        try:
+            self._enroll_person_inner(name)
+        finally:
+            self.enrollment["running"] = False
+
+    def _enroll_person_inner(self, name: str) -> None:
         if self._vision is None:
+            self.enrollment["ok"] = False
             self._audio.say("Non ho la telecamera attiva, non posso memorizzarti.")
             return
 
@@ -409,6 +417,7 @@ class MindService:
 
         def _progress(captured: int, total: int) -> None:
             nonlocal spoken_halfway
+            self.enrollment["captured"], self.enrollment["total"] = captured, total
             # Feedback vocale a metà
             if captured == total // 2 and not spoken_halfway:
                 spoken_halfway = True
@@ -424,6 +433,7 @@ class MindService:
         ok = self._vision.enroll_from_camera(
             person_id, name, n_frames=15, timeout_s=30.0, progress_cb=_progress
         )
+        self.enrollment["ok"] = ok
         if ok:
             self._audio.say(f"Perfetto {name}, ti ho memorizzato! Da ora ti riconoscerò.")
             self._memory.upsert_person(person_id, name, familiarity_delta=0.1)
