@@ -117,12 +117,25 @@ class RobotRuntime:
         )
         self._safety = SafetyMonitor(self._bus, limits)
 
+        # ── Body ──────────────────────────────────────────────────────────────
+        # "picrawler": the picrawler service (robot-emulator) is the body — the only
+        # process on the servos, camera and ultrasonic — and spooky sends it intents.
+        # "sunfounder": spooky drives the hardware itself, as before.
+        body_cfg = cfg.get("body", {})
+        self._body = None
+        if body_cfg.get("backend", "sunfounder") == "picrawler":
+            from services.picrawler_client import PicrawlerClient
+            self._body = PicrawlerClient(body_cfg.get("url", "http://localhost:8000"),
+                                         source=body_cfg.get("source", "brain"))
+            self._body.start()
+
         # ── Sensors ───────────────────────────────────────────────────────────
         sensor_cfg = cfg.get("sensors", {})
         self._sensors = SensorService(
             self._bus,
             poll_interval_s   = sensor_cfg.get("ultrasonic_poll_s", 0.10),
             system_interval_s = sensor_cfg.get("system_poll_s",     2.0),
+            distance_fn       = self._body.distance_cm if self._body else None,
         )
         # Wire sensor callbacks into safety monitor
         self._safety.register_distance_fn(self._sensors.get_distance_cm)
@@ -130,7 +143,13 @@ class RobotRuntime:
         self._safety.register_ram_fn(self._sensors.get_ram_free_mb)
 
         # ── Motor ─────────────────────────────────────────────────────────────
-        self._motor = MotorService(self._safety, self._bus, sensor=self._sensors)
+        if self._body is not None:
+            from services.picrawler_motor import PicrawlerMotorService
+            self._motor = PicrawlerMotorService(
+                self._safety, self._bus, self._body, sensor=self._sensors,
+                step_s=body_cfg.get("step_s", 0.8))
+        else:
+            self._motor = MotorService(self._safety, self._bus, sensor=self._sensors)
 
         # ── Memory ────────────────────────────────────────────────────────────
         mem_cfg = cfg.get("memory", {})
@@ -143,7 +162,8 @@ class RobotRuntime:
         # ── Face database + Vision ────────────────────────────────────────────────
         face_db_path = ROOT / cfg.get("face.db_path", "data/faces/")
         self._face_db = FaceDatabase(face_db_path)
-        self._vision  = VisionService(self._bus, self._safety, self._face_db, cfg)
+        self._vision  = VisionService(self._bus, self._safety, self._face_db, cfg,
+                                      frame_fn=self._body.camera_rgb if self._body else None)
 
         # ── Mind / LLM ────────────────────────────────────────────────────────────
         brain = OllamaBrain(cfg)

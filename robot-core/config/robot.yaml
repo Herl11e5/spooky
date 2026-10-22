@@ -6,6 +6,17 @@ robot:
   language: "it"              # it / en
   personality: "baymax-bb8"   # reference archetype
 
+# ── Body ──────────────────────────────────────────────────────────────────────
+# picrawler: the picrawler service (robot-emulator project) is the body — the only
+#   process on the servos, camera and ultrasonic, with its own safety and a person
+#   at its dashboard outranking the brain. Spooky sends it intents (source: brain).
+# sunfounder: spooky drives the hardware itself through SunFounder's library.
+body:
+  backend: picrawler
+  url: "http://localhost:8000"
+  source: brain
+  step_s: 0.8                 # one forward()/turn_left()… step, as do_action() took
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging:
   level: "INFO"               # DEBUG / INFO / WARNING / ERROR

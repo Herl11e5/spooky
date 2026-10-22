@@ -59,14 +59,22 @@ class CameraBackend:
     Returns RGB uint8 frames always (not BGR) to avoid constant conversion.
     """
 
-    def __init__(self, width: int = 640, height: int = 480, fps: int = 30):
+    def __init__(self, width: int = 640, height: int = 480, fps: int = 30, frame_fn=None):
         self._w   = width
         self._h   = height
         self._fps = fps
         self._cam = None
         self._backend = "none"
+        # With a picrawler body, the body owns the camera (one process can open it)
+        # and `frame_fn` returns its current RGB frame.
+        self._frame_fn = frame_fn
 
     def open(self) -> bool:
+        if self._frame_fn is not None:
+            self._backend = "picrawler"
+            log.info("Camera: frames from the picrawler body")
+            return True
+
         # 1. Try picamera2 (RPi)
         try:
             from picamera2 import Picamera2
@@ -103,6 +111,9 @@ class CameraBackend:
 
     def read_rgb(self) -> Optional[np.ndarray]:
         """Returns an RGB frame or None on failure."""
+        if self._backend == "picrawler":
+            return self._frame_fn()
+
         if self._backend == "picamera2":
             try:
                 return self._cam.capture_array()
@@ -408,6 +419,7 @@ class VisionService:
         safety: SafetyMonitor,
         face_db: FaceDatabase,
         cfg,   # ConfigNode
+        frame_fn=None,   # picrawler body: its camera frames instead of opening one
     ):
         self._bus     = bus
         self._safety  = safety
@@ -424,6 +436,7 @@ class VisionService:
             width  = cam_cfg.get("width",  640),
             height = cam_cfg.get("height", 480),
             fps    = cam_cfg.get("fps",    30),
+            frame_fn = frame_fn,
         )
 
         # Detector + recognizer

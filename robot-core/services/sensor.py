@@ -145,6 +145,7 @@ class SensorService:
         bus: EventBus,
         poll_interval_s: float = 0.10,
         system_interval_s: float = 2.0,
+        distance_fn=None,
     ):
         self._bus       = bus
         self._poll_s    = poll_interval_s
@@ -167,9 +168,13 @@ class SensorService:
         self._is_picked_up: bool = False
         self._accel_mag_prev: float = 1.0  # ~1g when resting
 
-        # Hardware
+        # Hardware. With a picrawler body, the body owns the ultrasonic sensor
+        # (its GPIO pins can have one user) and `distance_fn` reads it from there.
+        self._distance_fn = distance_fn
         self._ultrasonic: Optional[object] = None
-        if _ULTRASONIC_AVAILABLE:
+        if distance_fn is not None:
+            log.info("SensorService: distance from the picrawler body")
+        elif _ULTRASONIC_AVAILABLE:
             try:
                 self._ultrasonic = Ultrasonic(Pin(self._TRIG_PIN), Pin(self._ECHO_PIN))
                 log.info("SensorService: ultrasonic initialised")
@@ -276,6 +281,8 @@ class SensorService:
     # ── hardware readers ──────────────────────────────────────────────────────
 
     def _read_distance(self) -> float:
+        if self._distance_fn is not None:
+            return float(self._distance_fn())
         if self._ultrasonic is not None:
             val = self._ultrasonic.read()
             if val is not None and val > 0:
