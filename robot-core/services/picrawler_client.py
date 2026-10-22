@@ -21,6 +21,7 @@ API:
     body.gesture("wave")                 # body poses, no steps; gestures() lists durations
     body.look(yaw=10, pitch=5)           # lean the body toward a direction (no head)
     body.distance_cm(), body.heading_deg(), body.camera_rgb()
+    body.faces()                         # faces in view: position + identity embedding, no frames
 """
 
 from __future__ import annotations
@@ -146,6 +147,15 @@ class PicrawlerClient:
 
     def emergency_stop(self) -> bool:
         return self._ok(self._request("POST", "/e_stop"))
+
+    def faces(self) -> Optional[dict]:
+        """
+        The faces the body sees, largest first: {"status", "frame_size", "faces": [{id,
+        box (fractions of the frame), bearing_deg (> 0 left), distance_m, embedding
+        (128 floats, unit length, refreshed every ~0.5 s), ...}]}. None if unreachable.
+        """
+        reply = self._request("GET", "/faces")
+        return reply if isinstance(reply, dict) else None
 
     def camera_jpeg(self) -> Optional[bytes]:
         try:

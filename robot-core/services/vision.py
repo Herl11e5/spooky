@@ -17,6 +17,12 @@ Published events:
   OBJECTS_DETECTED   — ollama object list
 
 Upgrade path to face_recognition/insightface: swap FaceRecognizer subclass only.
+
+With a picrawler body (`faces_fn`), the body finds and tracks faces next to its
+camera (YuNet) and publishes an identity embedding per face (SFace); spooky
+matches those with EmbeddingRecognizer and keeps the names. No frames are pulled
+for faces — only when something asks for one (scene analysis, night watch, the
+dashboard). The events and their payloads are the same as without a body.
 """
 
 from __future__ import annotations
@@ -43,6 +49,8 @@ log = logging.getLogger(__name__)
 # A separate lock prevents two concurrent moondream calls but allows mind to
 # run its text model at the same time.
 _VISION_LOCK = threading.Lock()
+
+_FACE_FRESH_S = 0.5   # a body face last seen longer ago than this is not "in view"
 
 # Kept for API compatibility with main.py (call is now a no-op)
 def set_ollama_lock(lock: threading.Lock) -> None:
@@ -206,8 +214,10 @@ class FaceDatabase:
         samples_dir.mkdir(parents=True, exist_ok=True)
 
         with self._lock:
-            # Save raw crops
+            # Save raw crops (an embedding from the body is not an image: nothing to save)
             for i, crop in enumerate(face_crops):
+                if crop.ndim < 2:
+                    continue
                 gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY) if crop.ndim == 3 else crop
                 cv2.imwrite(str(samples_dir / f"{i:04d}.jpg"), gray)
 
@@ -362,6 +372,59 @@ class FaceRecognizer:
                 return None, 0.0
 
 
+class EmbeddingRecognizer:
+    """
+    Matches identity embeddings from the picrawler body (SFace: 128 floats, unit
+    length) against each enrolled person's mean embedding. Same interface as
+    FaceRecognizer, with an embedding where LBPH takes a gray crop.
+
+    Cosine similarity → spooky's confidence: OpenCV's same-person threshold for
+    SFace (0.363) lands on confidence_mid (0.55), 0.5 on confidence_high (0.80).
+    Different people score around 0.2, i.e. confidence ≈ 0.25.
+    """
+
+    _SAME_PERSON = 0.363
+
+    def __init__(self):
+        self._means: Dict[str, np.ndarray] = {}
+        self._lock = threading.RLock()
+
+    @staticmethod
+    def confidence(cosine: float) -> float:
+        return float(min(1.0, max(0.0, 0.55 + (cosine - EmbeddingRecognizer._SAME_PERSON) * 0.25 / 0.137)))
+
+    def enroll(self, person_id: str, embeddings: List[np.ndarray], save_dir: Path) -> None:
+        stack = np.array([np.asarray(e, np.float32).ravel() for e in embeddings])
+        np.save(save_dir / "embeddings.npy", stack)
+        self._remember(person_id, stack)
+
+    def load_embedding(self, person_id: str, person_dir: Path) -> bool:
+        path = person_dir / "embeddings.npy"
+        if not path.exists():
+            return False
+        try:
+            self._remember(person_id, np.load(path))
+            return True
+        except Exception as e:
+            log.error(f"EmbeddingRecognizer.load_embedding ({person_id}): {e}")
+            return False
+
+    def _remember(self, person_id: str, stack: np.ndarray) -> None:
+        mean = stack.mean(axis=0)
+        with self._lock:
+            self._means[person_id] = mean / (np.linalg.norm(mean) or 1.0)
+
+    def predict(self, embedding) -> Tuple[Optional[str], float]:
+        with self._lock:
+            if not self._means or embedding is None:
+                return None, 0.0
+            e = np.asarray(embedding, np.float32).ravel()
+            e = e / (np.linalg.norm(e) or 1.0)
+            person_id, cosine = max(((pid, float(m @ e)) for pid, m in self._means.items()),
+                                    key=lambda pc: pc[1])
+        return person_id, self.confidence(cosine)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Face detector (OpenCV haar cascade)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -420,6 +483,7 @@ class VisionService:
         face_db: FaceDatabase,
         cfg,   # ConfigNode
         frame_fn=None,   # picrawler body: its camera frames instead of opening one
+        faces_fn=None,   # picrawler body: the faces it sees (PicrawlerClient.faces)
     ):
         self._bus     = bus
         self._safety  = safety
@@ -439,13 +503,20 @@ class VisionService:
             frame_fn = frame_fn,
         )
 
-        # Detector + recognizer
-        det_cfg  = cfg.get("face.detector", {})
-        self._detector = FaceDetector(
-            scale_factor   = det_cfg.get("scale_factor",    1.15),
-            min_neighbours = det_cfg.get("min_neighbours",  5),
-        )
-        self._recognizer = FaceRecognizer()
+        # Detector + recognizer: the body's faces and embeddings, or a local cascade + LBPH
+        self._faces_fn = faces_fn
+        self._track_ids: Dict[int, Tuple[Optional[str], float]] = {}   # body track → best identity
+        self._frame_at = 0.0
+        if faces_fn is not None:
+            self._detector   = None
+            self._recognizer = EmbeddingRecognizer()
+        else:
+            det_cfg  = cfg.get("face.detector", {})
+            self._detector = FaceDetector(
+                scale_factor   = det_cfg.get("scale_factor",    1.15),
+                min_neighbours = det_cfg.get("min_neighbours",  5),
+            )
+            self._recognizer = FaceRecognizer()
 
         # Intervals
         self._face_interval   = cfg.get("camera.face_detect_interval_s", 0.25)
@@ -497,7 +568,8 @@ class VisionService:
         self._scene_thread = threading.Thread(
             target=self._scene_loop, daemon=True, name="Vision-Scene"
         )
-        self._capture_thread.start()
+        if self._faces_fn is None:
+            self._capture_thread.start()   # with a body, frames are fetched only when asked for
         self._face_thread.start()
         self._scene_thread.start()
         log.info(f"VisionService started (camera={self._camera.backend})")
@@ -523,6 +595,8 @@ class VisionService:
         progress_cb(captured, total) is called after each successful capture.
         """
         log.info(f"Enrolling '{display_name}' — look at the camera ({n_frames} samples needed)")
+        if self._faces_fn is not None:
+            return self._enroll_from_body(person_id, display_name, n_frames, timeout_s, progress_cb)
         crops: List[np.ndarray] = []
         deadline = time.time() + timeout_s
         last_progress = 0
@@ -574,6 +648,10 @@ class VisionService:
 
     def get_frame(self) -> Optional[np.ndarray]:
         """Public: return a copy of the latest RGB frame (or None if no camera)."""
+        if self._faces_fn is not None and time.monotonic() - self._frame_at > 0.5:
+            frame = self._camera.read_rgb()           # one frame from the body, on demand
+            with self._frame_lock:
+                self._last_frame_rgb, self._frame_at = frame, time.monotonic()
         with self._frame_lock:
             f = self._last_frame_rgb
             return f.copy() if f is not None else None
@@ -618,10 +696,103 @@ class VisionService:
 
     def _face_loop(self) -> None:
         while self._active:
-            frame = self._get_frame()
-            if frame is not None:
-                self._process_faces(frame)
+            if self._faces_fn is not None:
+                self._process_body_faces(self._faces_fn())
+            else:
+                frame = self._get_frame()
+                if frame is not None:
+                    self._process_faces(frame)
             time.sleep(self._face_interval)
+
+    def _process_body_faces(self, snap: Optional[dict]) -> None:
+        """The body's faces → the same events _process_faces publishes from a frame."""
+        faces = snap.get("faces", []) if snap and snap.get("status") == "ok" else []
+        # The body keeps a face (and its id) for a while after it was last seen, so
+        # that a glance away does not lose who it was; present means seen just now.
+        seen = [f for f in faces if f.get("age_s", 0.0) <= _FACE_FRESH_S]
+        if not faces:
+            self._track_ids.clear()
+        if not seen:
+            self._consecutive_no_face += 1
+            if self._consecutive_no_face == self._face_loss_threshold:
+                with self._det_lock:
+                    self._last_faces = []
+                self._bus.publish(EventType.PERSON_LOST, {}, source="VisionService")
+            return
+
+        self._consecutive_no_face = 0
+        frame_w, frame_h = snap.get("frame_size") or (320, 240)
+        face = seen[0]   # the largest, as before
+        person_id, conf = self._identify(face)
+        self._track_ids = {f["id"]: self._track_ids[f["id"]] for f in faces if f["id"] in self._track_ids}
+
+        bx, by, bw, bh = face["box"]
+        x, y, w, h = (int(round(bx * frame_w)), int(round(by * frame_h)),
+                      int(round(bw * frame_w)), int(round(bh * frame_h)))
+        display_label = (self._db.display_name(person_id) or person_id) if person_id else None
+        with self._det_lock:
+            self._last_faces = [(x, y, w, h, display_label, conf)]
+
+        base_payload = {
+            "bbox":        [x, y, w, h],
+            "center_x":    round((bx + bw / 2) * 2 - 1, 3),   # -1=left, +1=right
+            "center_y":    round((by + bh / 2) * 2 - 1, 3),   # -1=top,  +1=bottom
+            "confidence":  round(conf, 3),
+            "track_id":    face["id"],
+            "bearing_deg": face.get("bearing_deg"),
+            "distance_m":  face.get("distance_m"),
+        }
+        self._bus.publish(EventType.PERSON_DETECTED, {**base_payload, "person_id": person_id},
+                          source="VisionService")
+        if conf >= self._conf_high and person_id:
+            self._bus.publish(EventType.PERSON_IDENTIFIED,
+                              {**base_payload, "person_id": person_id,
+                               "display_name": self._db.display_name(person_id) or person_id},
+                              source="VisionService")
+        else:
+            self._bus.publish(EventType.PERSON_UNKNOWN, base_payload, source="VisionService")
+
+    def _identify(self, face: dict) -> Tuple[Optional[str], float]:
+        """
+        Best identity seen on this body track so far: one blurred embedding while
+        the person turns their head does not make a known face unknown again.
+        """
+        best = self._track_ids.get(face["id"], (None, 0.0))
+        person_id, conf = self._recognizer.predict(face.get("embedding"))
+        if person_id is not None and conf > best[1]:
+            best = (person_id, conf)
+        self._track_ids[face["id"]] = best
+        return best
+
+    def _enroll_from_body(self, person_id: str, display_name: str, n_frames: int,
+                          timeout_s: float, progress_cb=None) -> bool:
+        """Enroll from the body's embeddings of the largest face, one per refresh (~2 a second)."""
+        samples: List[np.ndarray] = []
+        deadline = time.time() + timeout_s
+        last = None
+        while len(samples) < n_frames and time.time() < deadline:
+            snap = self._faces_fn()
+            faces = snap.get("faces", []) if snap and snap.get("status") == "ok" else []
+            emb = faces[0].get("embedding") if faces else None
+            if emb is not None and emb != last:
+                last = emb
+                samples.append(np.asarray(emb, np.float32))
+                log.info(f"Enroll '{display_name}': {len(samples)}/{n_frames}")
+                if progress_cb:
+                    try:
+                        progress_cb(len(samples), n_frames)
+                    except Exception:
+                        pass
+            time.sleep(0.15)
+
+        if len(samples) < n_frames // 2:
+            log.error(f"Enrollment failed for '{display_name}': only {len(samples)}/{n_frames} samples")
+            return False
+        ok = self._db.enroll_person(person_id, display_name, samples, self._recognizer)
+        if ok:
+            self._track_ids.clear()
+            log.info(f"Enrollment complete for '{display_name}' — recognizer updated")
+        return ok
 
     def _process_faces(self, frame: np.ndarray) -> None:
         faces = self._detector.detect(frame)

@@ -264,10 +264,11 @@ def test_scan_turns_a_full_circle(clock):
 class _Handler(BaseHTTPRequestHandler):
     posts: list = []
     state: dict = {}
+    faces: dict = {}
     refuse = False
 
     def do_GET(self):
-        self._reply(_Handler.state)
+        self._reply(_Handler.faces if self.path == "/faces" else _Handler.state)
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])) or b"{}")
@@ -346,3 +347,151 @@ def test_unreachable_body(server):
     body = PicrawlerClient("http://127.0.0.1:1", timeout_s=0.2)
     assert body.command("STOP") is False
     assert body.distance_cm() == 999.0 and body.heading_deg() is None and not body.connected
+
+
+def test_client_reads_faces(server):
+    _Handler.faces = {"status": "ok", "frame_size": [320, 240], "age_s": 0.1,
+                      "faces": [{"id": 3, "box": [0.1, 0.2, 0.15, 0.2], "embedding": [0.0] * 128}]}
+    reply = PicrawlerClient(server).faces()
+    assert reply["faces"][0]["id"] == 3 and len(reply["faces"][0]["embedding"]) == 128
+    assert PicrawlerClient("http://127.0.0.1:1", timeout_s=0.2).faces() is None
+
+
+# ── faces from the body ───────────────────────────────────────────────────────
+
+import numpy as np
+
+from core.config import ConfigNode
+from services.vision import EmbeddingRecognizer, FaceDatabase, VisionService
+
+
+class RecordingBus:
+    def __init__(self):
+        self.events = []
+
+    def publish(self, event_type, payload=None, source=""):
+        self.events.append((event_type, payload or {}))
+
+    def of(self, event_type):
+        return [p for t, p in self.events if t == event_type]
+
+
+def unit(seed):
+    v = np.random.default_rng(seed).normal(size=128).astype(np.float32)
+    return v / np.linalg.norm(v)
+
+
+def near(v, seed, amount=0.4):
+    """Another look at the same face: mostly v, a bit of noise (cosine ≈ 0.9)."""
+    w = v + amount * unit(seed) * 0.6
+    return w / np.linalg.norm(w)
+
+
+def snap(*faces):
+    return {"status": "ok", "frame_size": [320, 240], "faces": list(faces)}
+
+
+def face(track, embedding=None, box=(0.6, 0.25, 0.15, 0.2)):
+    return {"id": track, "box": list(box), "bearing_deg": -8.0, "distance_m": 0.8,
+            "embedding": None if embedding is None else [float(x) for x in embedding]}
+
+
+@pytest.fixture
+def vision(tmp_path):
+    bus = RecordingBus()
+    body = {"snap": snap()}
+    frames = []
+    v = VisionService(bus, None, FaceDatabase(tmp_path / "faces"), ConfigNode({}),
+                      frame_fn=lambda: frames.append(1) or np.zeros((240, 320, 3), np.uint8),
+                      faces_fn=lambda: body["snap"])
+    v._camera.open()                                  # what start() does, without its threads
+    return v, bus, body, frames
+
+
+def test_body_faces_become_the_same_events(vision):
+    v, bus, _, _ = vision
+    from core.bus import EventType
+    v._process_body_faces(snap(face(5)))
+    detected = bus.of(EventType.PERSON_DETECTED)[0]
+    assert detected["bbox"] == [192, 60, 48, 48]
+    assert detected["center_x"] == pytest.approx(0.35) and detected["center_y"] == pytest.approx(-0.3)
+    assert detected["track_id"] == 5 and detected["person_id"] is None
+    assert bus.of(EventType.PERSON_UNKNOWN) and not bus.of(EventType.PERSON_IDENTIFIED)
+
+
+def test_lost_after_the_threshold(vision):
+    v, bus, _, _ = vision
+    from core.bus import EventType
+    v._process_body_faces(snap(face(5)))
+    for _ in range(v._face_loss_threshold):
+        v._process_body_faces(snap())
+    assert len(bus.of(EventType.PERSON_LOST)) == 1
+
+
+def test_enrolled_face_is_identified_by_name(vision, monkeypatch):
+    v, bus, body, _ = vision
+    from core.bus import EventType
+    import services.vision as sv
+    me = unit(1)
+    looks = iter([near(me, i) for i in range(100, 200)])
+
+    def next_look():
+        body["snap"] = snap(face(7, next(looks)))
+        return body["snap"]
+    v._faces_fn = next_look
+    monkeypatch.setattr(sv.time, "sleep", lambda s: None)
+    assert v.enroll_from_camera("p1", "Samuele", n_frames=6, timeout_s=5)
+    assert (Path(v._db._root) / "p1" / "embeddings.npy").exists()
+
+    v._process_body_faces(snap(face(9, near(me, 7))))
+    identified = bus.of(EventType.PERSON_IDENTIFIED)
+    assert identified and identified[-1]["display_name"] == "Samuele"
+
+
+def test_a_stranger_stays_unknown(vision):
+    v, bus, _, _ = vision
+    from core.bus import EventType
+    v._recognizer.enroll("p1", [unit(1)], Path(v._db._root))
+    v._process_body_faces(snap(face(4, unit(2))))
+    assert not bus.of(EventType.PERSON_IDENTIFIED) and bus.of(EventType.PERSON_UNKNOWN)
+
+
+def test_identity_sticks_to_the_track(vision):
+    v, bus, _, _ = vision
+    from core.bus import EventType
+    me = unit(1)
+    v._recognizer.enroll("p1", [me], Path(v._db._root))
+    v._process_body_faces(snap(face(4, near(me, 3))))
+    v._process_body_faces(snap(face(4, unit(5))))       # a blurred look while turning
+    assert len(bus.of(EventType.PERSON_IDENTIFIED)) == 2
+    v._process_body_faces(snap(face(8, unit(5))))       # someone new on a new track
+    assert bus.of(EventType.PERSON_UNKNOWN)
+
+
+def test_confidence_scale():
+    assert EmbeddingRecognizer.confidence(0.363) == pytest.approx(0.55)
+    assert EmbeddingRecognizer.confidence(0.5) == pytest.approx(0.80)
+    assert EmbeddingRecognizer.confidence(0.2) < 0.3
+
+
+def test_no_frames_are_pulled_for_faces(vision):
+    v, _, _, frames = vision
+    for _ in range(10):
+        v._process_body_faces(snap(face(5)))
+    assert frames == []
+    assert v.get_frame() is not None and v.get_frame() is not None and len(frames) == 1   # cached
+
+
+def test_a_face_kept_by_the_body_is_not_in_view(vision):
+    v, bus, _, _ = vision
+    from core.bus import EventType
+    me = unit(1)
+    v._recognizer.enroll("p1", [me], Path(v._db._root))
+    v._process_body_faces(snap(face(4, near(me, 3))))
+    stale = {**face(4, unit(5)), "age_s": 1.5}                # looked down: the body still holds the id
+    for _ in range(v._face_loss_threshold):
+        v._process_body_faces(snap(stale))
+    assert len(bus.of(EventType.PERSON_DETECTED)) == 1 and bus.of(EventType.PERSON_LOST)
+    v._process_body_faces(snap({**face(4, unit(5)), "age_s": 0.0}))   # back, same track
+    assert bus.of(EventType.PERSON_IDENTIFIED)[-1]["track_id"] == 4
+    assert len(bus.of(EventType.PERSON_IDENTIFIED)) == 2      # still known, though this look is poor
