@@ -525,6 +525,7 @@ class VisionService:
         cfg,   # ConfigNode
         frame_fn=None,   # picrawler body: its camera frames instead of opening one
         faces_fn=None,   # picrawler body: the faces it sees (PicrawlerClient.faces)
+        attention_fn=None,  # picrawler body: ask for fresh embeddings (enrolling)
     ):
         self._bus     = bus
         self._safety  = safety
@@ -546,6 +547,7 @@ class VisionService:
 
         # Detector + recognizer: the body's faces and embeddings, or a local cascade + LBPH
         self._faces_fn = faces_fn
+        self._attention_fn = attention_fn
         self._track_ids: Dict[int, Tuple[Optional[str], float]] = {}   # body track → best identity
         # Expression of the face in front: a candidate becomes current once it has lasted.
         self._expr_candidate: Tuple[Optional[str], float] = (None, 0.0)
@@ -868,6 +870,8 @@ class VisionService:
         samples: List[np.ndarray] = []
         deadline = time.time() + timeout_s
         last = None
+        if self._attention_fn is not None:
+            self._attention_fn(timeout_s)    # the body slows embeddings for faces it has seen
         while len(samples) < n_frames and time.time() < deadline:
             snap = self._faces_fn()
             faces = snap.get("faces", []) if snap and snap.get("status") == "ok" else []

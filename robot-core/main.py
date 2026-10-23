@@ -168,7 +168,8 @@ class RobotRuntime:
         self._face_db = FaceDatabase(face_db_path)
         self._vision  = VisionService(self._bus, self._safety, self._face_db, cfg,
                                       frame_fn=self._body.camera_rgb if self._body else None,
-                                      faces_fn=self._body.faces if self._body else None)
+                                      faces_fn=self._body.faces if self._body else None,
+                                      attention_fn=self._body.face_attention if self._body else None)
 
         # ── Mind / LLM ────────────────────────────────────────────────────────────
         brain = OllamaBrain(cfg)

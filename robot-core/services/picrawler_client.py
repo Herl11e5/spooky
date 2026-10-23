@@ -157,6 +157,10 @@ class PicrawlerClient:
         reply = self._request("GET", "/faces")
         return reply if isinstance(reply, dict) else None
 
+    def face_attention(self, seconds: float = 30.0) -> bool:
+        """Ask the body for fresh face embeddings for a while (it slows them for known faces)."""
+        return self._ok(self._request("POST", "/faces/attention", {"seconds": seconds}))
+
     def camera_jpeg(self) -> Optional[bytes]:
         try:
             with urllib.request.urlopen(self._url + "/camera", timeout=self._timeout) as r:
