@@ -557,6 +557,8 @@ class VisionService:
         # Expression of the face in front: a candidate becomes current once it has lasted.
         self._expr_candidate: Tuple[Optional[str], float] = (None, 0.0)
         self._expr_current: Dict[str, object] = {}
+        from services.expressions import ExpressionBaseline
+        self._baseline = ExpressionBaseline(Path(self._db._root))   # each known person's resting face
         self._frame_at = 0.0
         if faces_fn is not None:
             self._detector   = None
@@ -798,8 +800,15 @@ class VisionService:
         self._bus.publish(EventType.PERSON_DETECTED, {**base_payload, "person_id": person_id},
                           source="VisionService")
         name = (self._db.display_name(person_id) or person_id) if person_id and conf >= self._conf_high else None
+        expr_conf, usual = face.get("expression_confidence") or 0.0, None
+        if name and expression is not None and face.get("expressions"):
+            relative = self._baseline.judge(person_id, face["expressions"])
+            # Only where the model itself says neutral or is unsure: a clear "happy 0.97"
+            # needs no help, and keeps the meaning it had.
+            if relative and (expression == "neutral" or expr_conf < self._EXPR_MIN_CONF):
+                expression, expr_conf, usual = relative
         self._track_expression(face["id"], person_id if name else None, name,
-                               expression, face.get("expression_confidence") or 0.0)
+                               expression, expr_conf, usual=usual)
         if conf >= self._conf_high and person_id:
             self._bus.publish(EventType.PERSON_IDENTIFIED,
                               {**base_payload, "person_id": person_id,
@@ -812,13 +821,18 @@ class VisionService:
     _EXPR_MIN_CONF = 0.5
 
     def _track_expression(self, track_id: int, person_id: Optional[str], name: Optional[str],
-                          expression: Optional[str], confidence: float) -> None:
-        """Publish EXPRESSION_CHANGED when the face in front settles on a new expression."""
+                          expression: Optional[str], confidence: float,
+                          usual: Optional[float] = None) -> None:
+        """
+        Publish EXPRESSION_CHANGED when the face in front settles on a new expression.
+        usual: set when the expression was read against the person's resting face
+        (services/expressions.py) — then a probability under the usual threshold counts.
+        """
         now = time.monotonic()
         if self._expr_current.get("track_id") != track_id:
             self._expr_current = {"track_id": track_id, "expression": None}
             self._expr_candidate = (None, now)
-        if expression is None or confidence < self._EXPR_MIN_CONF:
+        if expression is None or (confidence < self._EXPR_MIN_CONF and usual is None):
             return
         if expression != self._expr_candidate[0]:
             self._expr_candidate = (expression, now)
@@ -831,7 +845,9 @@ class VisionService:
             self._bus.publish(EventType.EXPRESSION_CHANGED,
                               {"track_id": track_id, "person_id": person_id, "name": name,
                                "expression": expression, "confidence": round(confidence, 2),
-                               "previous": previous}, source="VisionService")
+                               "previous": previous, "usual": usual}, source="VisionService")
+            log.info(f"Expression: {name or 'someone'} looks {expression} ({confidence:.2f}"
+                     + (f", against a usual {usual:.2f})" if usual is not None else ")"))
         if expression == self._expr_current.get("expression"):
             self._expr_current["seen"] = now
 
@@ -860,6 +876,7 @@ class VisionService:
         self._db.delete_person(person_id)
         if isinstance(self._recognizer, EmbeddingRecognizer):
             self._recognizer.forget(person_id)
+        self._baseline.forget(person_id)          # their resting face goes with them
         self._track_ids.clear()
 
     def _identify(self, face: dict) -> Tuple[Optional[str], float]:

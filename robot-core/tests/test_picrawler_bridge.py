@@ -627,6 +627,32 @@ def test_an_expression_counts_once_it_lasts(vision, monkeypatch):
     assert len(bus.of(EventType.EXPRESSION_CHANGED)) == 1
 
 
+def test_a_known_persons_sad_face_counts_against_their_usual(vision, monkeypatch, tmp_path):
+    v, bus, _, _ = vision
+    from core.bus import EventType
+    from services.expressions import ExpressionBaseline
+    import services.vision as sv
+    t = [1000.0]
+    monkeypatch.setattr(sv.time, "monotonic", lambda: t[0])
+    v._baseline = ExpressionBaseline(tmp_path / "baselines", clock=lambda: t[0])
+    me = unit(1)
+    v._db.enroll_person("p1", "Samuele", [me], v._recognizer)
+    resting = {"angry": .03, "disgust": .02, "fearful": .03, "happy": .04, "neutral": .60, "sad": .25, "surprised": .03}
+    sad = {**resting, "neutral": .45, "sad": .45}
+    def look(probs, conf):
+        return snap({**face(4, near(me, 3)), "expression": "neutral", "expression_confidence": conf,
+                     "expressions": probs, "expression_age_s": 0.1})
+    for _ in range(400):                                        # 200 s of the resting face
+        v._process_body_faces(look(resting, 0.60))
+        t[0] += 0.5
+    assert not [e for e in bus.of(EventType.EXPRESSION_CHANGED) if e["expression"] == "sad"]
+    for _ in range(4):                                          # sad, for two seconds: the model says neutral
+        v._process_body_faces(look(sad, 0.45))
+        t[0] += 0.5
+    changed = [e for e in bus.of(EventType.EXPRESSION_CHANGED) if e["expression"] == "sad"]
+    assert changed and changed[-1]["name"] == "Samuele" and changed[-1]["usual"] == 0.25
+
+
 class FakeModes:
     def __init__(self, mode):
         from core.modes import Mode
