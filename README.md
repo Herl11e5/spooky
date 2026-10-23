@@ -49,8 +49,8 @@ la precedenza. È la divisione `robotd`/client di microduck.
   cade — non una voce, che cresce invece di esplodere), qualcosa che gli arriva addosso in
   fretta, la luce che si spegne o si accende: sobbalza (gesto `flinch`) ed esclama; se è solo,
   si guarda intorno. Poi ci si abitua: la seconda volta solo un verso, la terza niente, finché
-  non passano due minuti tranquilli. Mai mentre parla o gli si parla; di notte resta immobile
-  e lascia l'evento agli allarmi.
+  non passano due minuti tranquilli. Mai mentre parla o gli si parla, né in modalità
+  concentrazione; di notte resta immobile e lascia l'evento agli allarmi.
 - **Salute**: `/api/state` dice di ogni parte se funziona (microfono, riconoscimento vocale,
   voce, collegamento al corpo). Il modello linguistico è a parte: il Mac può dormire, e non è
   mai colpa di una release.

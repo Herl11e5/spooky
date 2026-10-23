@@ -15,9 +15,10 @@ cry, a third gets nothing, until two quiet minutes have passed — a television
 does not keep it jumping all evening.
 
 Not while it is speaking or someone is talking to it (a raised voice is not a
-bang), and only words, no flinch, in focus mode. In night watch it stays still
-and silent: the events still reach the alerts (services/alert.py), which is
-where an intruder belongs.
+bang). In focus mode it keeps quiet — focus means no initiative, and a "Hm?" at
+every clap is one (2026-10-23). In night watch it stays still and silent too:
+the events still reach the alerts (services/alert.py), which is where an
+intruder belongs.
 """
 
 from __future__ import annotations
@@ -131,8 +132,8 @@ class StartleSkill:
         """What it did: "flinch", "cry", or None. Public so tests can drive it."""
         now = self._clock()
         mode = self._mm.current
-        if mode in (Mode.NIGHT_WATCH, Mode.SAFE_SHUTDOWN):
-            log.info(f"Startle: {kind} ({detail}) — keeping still, the night watch has it")
+        if mode in (Mode.NIGHT_WATCH, Mode.SAFE_SHUTDOWN, Mode.FOCUS_ASSISTANT):
+            log.info(f"Startle: {kind} ({detail}) — keeping still ({mode.value})")
             return None
         if self._speaking or now < self._talking_until:
             log.debug(f"Startle: {kind} while talking — not a startle")
@@ -142,7 +143,7 @@ class StartleSkill:
             log.info(f"Startle: {kind} again — used to it by now")
             return None
         full, short = _CRIES.get(kind, ("Whoa!", "Hm?"))
-        if strength < 0.9 or mode == Mode.FOCUS_ASSISTANT:
+        if strength < 0.9:
             self._audio.say(short, feeling="question")
             log.info(f"Startle: {kind} ({detail}) — a cry")
             return "cry"

@@ -477,9 +477,21 @@ class WakeSpotter:
 
     Both recognisers time their words on the same stream, so the command is what the
     free one heard from just after the name.
+
+    The grammar recogniser must choose between the name and [unk], so in other
+    people's flowing speech it sometimes chooses the name — at confidence 1.00, so
+    confidence cannot tell (2026-10-23, 14:04–14:24: "…provate a chiamare il servizio
+    clienti", "…primitivo e del demanio allora navigare nel sito…"). Someone calling
+    it starts with the name, or a greeting before it; a name glued to the end of two
+    or more words is the middle of somebody's sentence, and is ignored. (Asking the
+    language model whether the words were meant for the robot was measured and does
+    not work: on short garbled fragments gemma3 put "cosa vedi" among the overheard.)
     """
 
     _NAME_S = 0.3          # the command starts this long after the name begins
+    _GLUED_S = 0.3         # a word ending this close before the name runs into it
+    _GREETINGS = frozenset({"ciao", "ehi", "ei", "hey", "oh", "senti", "ok", "okay", "salve",
+                            "buongiorno", "buonasera", "dai"})
 
     def __init__(self, wake_word: str = "spooky", min_conf: float = 0.9, wait_s: float = 2.5,
                  strict_fn: Optional[Callable[[], bool]] = None, strict_conf: float = 0.97) -> None:
@@ -518,9 +530,20 @@ class WakeSpotter:
         covering = [u for u in self._utterances if float(u[-1]["end"]) >= begin]
         if not covering and now_s - self._name_start < self._wait:
             return None                            # the free recogniser has not finished it yet
-        command = [w["word"] for w in covering[0] if float(w["start"]) >= begin] if covering else []
+        words = covering[0] if covering else []
+        name_at = self._name_start
         self._name_start = None
         self._utterances = []
+        # Before the name: what ended before it began (the free recogniser's own
+        # spelling of the name starts with it, give or take a tenth of a second).
+        before = [w for w in words if float(w["start"]) < name_at - 0.15 and float(w["end"]) <= name_at + 0.1]
+        command = [w["word"] for w in words if float(w["start"]) >= begin]
+        context = f"'{' '.join(w['word'] for w in before[-4:])} | {' '.join(command)}'"
+        if len(before) >= 2 and name_at - float(before[-1]["end"]) < self._GLUED_S \
+                and before[-1]["word"] not in self._GREETINGS:
+            log.info(f"Name in the middle of a sentence — ignored: {context}")
+            return None
+        log.info(f"Name taken: {context}")
         return " ".join(command)
 
 
@@ -736,42 +759,53 @@ class AudioInput:
         if self._device is not None:
             stream_kwargs["device"] = self._device
 
-        try:
-            with sd.RawInputStream(**stream_kwargs) as stream:
-                while self._active:
-                    data, _ = stream.read(blocksize)
-                    raw = bytes(data)
-                    self.heard_at = time.time()
-                    # Resample to 16000 Hz if needed (numpy — Python 3.13 safe)
-                    if hw_rate != 16000:
-                        raw = self._resample_numpy(raw, hw_rate, 16000)
-                    stream_s += len(raw) / 32000.0
-                    if self._moving_fn is not None and self._moving_fn():
-                        self._moved_at = time.time()
-                    self._listen_for_bangs(raw)
-                    if kws.AcceptWaveform(raw):
-                        spotter.spotted(json.loads(kws.Result()).get("result", []))
-                    if rec.AcceptWaveform(raw):
-                        result = json.loads(rec.Result())
-                        spotter.heard(result.get("result", []))
-                        text   = result.get("text", "").strip()
-                        if text:
-                            self._handle_text(text, final=True)
-                    else:
-                        partial = json.loads(rec.PartialResult()).get("partial", "").strip()
-                        if partial:
-                            self._handle_text(partial, final=False)
-                    command = spotter.poll(stream_s)
-                    if command is not None:
-                        self._wake(command, f"(spotted) {command}")
-                    # The command ends after a silence — checked here, every half second:
-                    # waiting for the next transcript to check it left a command hanging
-                    # until somebody spoke again.
-                    if self._state == self._STATE_ACTIVE and time.time() - self._last_speech_ts >= (
-                            self._command_timeout if any(self._command_parts) else self._FIRST_WORDS_S):
-                        self._emit_command()
-        except Exception as e:
-            log.error(f"AudioInput stream error: {e}")
+        # A stream that fails (a USB hiccup, the mic pulled out) is reopened: before,
+        # the thread ended and spooky stayed deaf until the next restart.
+        while self._active:
+            try:
+                with sd.RawInputStream(**stream_kwargs) as stream:
+                    while self._active:
+                        data, _ = stream.read(blocksize)
+                        raw = bytes(data)
+                        self.heard_at = time.time()
+                        # Resample to 16000 Hz if needed (numpy — Python 3.13 safe)
+                        if hw_rate != 16000:
+                            raw = self._resample_numpy(raw, hw_rate, 16000)
+                        stream_s += len(raw) / 32000.0
+                        if self._moving_fn is not None and self._moving_fn():
+                            self._moved_at = time.time()
+                        self._listen_for_bangs(raw)
+                        if kws.AcceptWaveform(raw):
+                            spotter.spotted(json.loads(kws.Result()).get("result", []))
+                        if rec.AcceptWaveform(raw):
+                            result = json.loads(rec.Result())
+                            spotter.heard(result.get("result", []))
+                            text   = result.get("text", "").strip()
+                            if text:
+                                self._handle_text(text, final=True)
+                        else:
+                            partial = json.loads(rec.PartialResult()).get("partial", "").strip()
+                            if partial:
+                                self._handle_text(partial, final=False)
+                        command = spotter.poll(stream_s)
+                        if command is not None:
+                            self._wake(command, f"(spotted) {command}")
+                        # The command ends after a silence — checked here, every half second:
+                        # waiting for the next transcript to check it left a command hanging
+                        # until somebody spoke again.
+                        if self._state == self._STATE_ACTIVE and time.time() - self._last_speech_ts >= (
+                                self._command_timeout if any(self._command_parts) else self._FIRST_WORDS_S):
+                            self._emit_command()
+            except Exception as e:
+                if not self._active:
+                    break                   # stopping: the stream was closed under the read
+                log.error(f"AudioInput stream error: {e} — reopening in {self._REOPEN_S:.0f} s")
+                time.sleep(self._REOPEN_S)
+                try:                        # a replugged USB mic comes back as a new device
+                    sd._terminate()
+                    sd._initialize()
+                except Exception:
+                    pass
 
     def _detect_samplerate(self, sd) -> int:
         """Try rates in order; return the first one the device accepts."""
@@ -831,6 +865,7 @@ class AudioInput:
             if time.time() - self._last_speech_ts >= self._command_timeout:
                 self._emit_command()
 
+    _REOPEN_S = 2.0       # after a stream error, before opening the microphone again
     _MOTION_TAIL_S = 1.5  # the name's result arrives about a second after it was said
     _REFRACTORY_S = 3.0
 

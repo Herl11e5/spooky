@@ -825,6 +825,28 @@ def test_the_spotted_name_takes_the_words_after_it_as_the_command():
     assert spot.poll(14.5) is None                                  # once only
 
 
+def test_a_name_in_the_middle_of_a_sentence_is_someone_else_talking():
+    from services.audio import WakeSpotter
+    spot = WakeSpotter()
+    spot.spotted([_w("spooky", 5.0, 5.4)])                          # conf 1.00: confidence can't tell
+    spot.heard([_w("e", 4.1, 4.2), _w("quindi", 4.3, 4.7), _w("del", 4.8, 4.95), _w("poco", 5.0, 5.4),
+                _w("caso", 5.5, 5.8), _w("treviso", 5.9, 6.4)])
+    assert spot.poll(7.0) is None
+
+
+def test_a_greeting_or_a_pause_before_the_name_is_a_call():
+    from services.audio import WakeSpotter
+    spot = WakeSpotter()
+    spot.spotted([_w("spooky", 5.0, 5.4)])
+    spot.heard([_w("ehi", 4.2, 4.5), _w("ciao", 4.55, 4.9), _w("sporchi", 5.0, 5.4), _w("come", 5.5, 5.7),
+                _w("stai", 5.7, 6.0)])
+    assert spot.poll(7.0) == "come stai"
+    spot.spotted([_w("spooky", 12.0, 12.4)])
+    spot.heard([_w("allora", 9.0, 9.4), _w("vediamo", 9.5, 10.0), _w("sporchi", 12.0, 12.4),
+                _w("girati", 12.5, 12.9)])                          # a second's pause, then the call
+    assert spot.poll(14.0) == "girati"
+
+
 def test_a_lone_name_wakes_it_with_no_command_yet():
     from services.audio import WakeSpotter
     spot = WakeSpotter()

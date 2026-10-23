@@ -106,10 +106,11 @@ def test_while_talking_a_loud_word_is_not_a_startle():
     assert s.react("sound", "loud") is None and not motor.moves
 
 
-def test_night_watch_keeps_still():
-    s, _, audio, motor, _ = skill()
-    s._mm = type("M", (), {"current": Mode.NIGHT_WATCH})()
-    assert s.react("dark", "lights off") is None and not audio.said
+def test_night_watch_and_focus_keep_still_and_quiet():
+    for mode in (Mode.NIGHT_WATCH, Mode.FOCUS_ASSISTANT):
+        s, _, audio, motor, _ = skill()
+        s._mm = type("M", (), {"current": mode})()
+        assert s.react("sound", "bang") is None and not audio.said and not motor.moves
 
 
 def test_the_body_stimulus_becomes_motion_and_a_reaction():
