@@ -837,6 +837,13 @@ class VisionService:
             return dict(cur)
         return None
 
+    def known_in_view(self) -> Optional[str]:
+        """The display name of a person recognised in front right now, if any."""
+        for pid, conf in list(self._track_ids.values()):
+            if pid and conf >= self._conf_high:
+                return self._db.display_name(pid) or pid
+        return None
+
     def track_identities(self) -> Dict[int, dict]:
         """Who each of the body's face tracks is, as far as spooky knows (for the dashboard)."""
         return {tid: {"person_id": pid, "name": (self._db.display_name(pid) or pid) if pid else None,

@@ -398,7 +398,8 @@ class MindService:
                 self._audio.say("I haven't looked around yet. Give me a moment.")
             return
 
-        # "mi chiamo X" / "sono X" / "il mio nome è X" / "chiamami X" — auto-enroll
+        # "mi chiamo X" / "il mio nome è X" / "chiamami X" — auto-enroll. Not "sono X":
+        # "sono stanco" would have enrolled someone called Stanco.
         import re as _re
         _enroll_patterns = [
             r"mi chiamo\s+([a-zA-ZÀ-ÿ]+)",
@@ -406,7 +407,6 @@ class MindService:
             r"il mio nome\s+([a-zA-ZÀ-ÿ]+)",
             r"chiamami\s+([a-zA-ZÀ-ÿ]+)",
             r"mi puoi chiamare\s+([a-zA-ZÀ-ÿ]+)",
-            r"^sono\s+([a-zA-ZÀ-ÿ]{3,})\s*$",
         ]
         m = next((_re.search(p, cmd_lo) for p in _enroll_patterns if _re.search(p, cmd_lo)), None)
         if m:
@@ -431,6 +431,14 @@ class MindService:
     def enroll(self, name: str) -> bool:
         """Learn the face in front of the camera as `name` (voice "mi chiamo …" or the dashboard)."""
         if self.enrollment.get("running"):
+            return False
+        # A face it already knows is not learnt again under another name: a sentence
+        # overheard in the room ("sono Giulia") nearly enrolled the owner as someone else.
+        known = self._vision.known_in_view() if self._vision is not None and hasattr(self._vision, "known_in_view") else None
+        if known and known.lower() != name.lower():
+            log.info(f"MindService: not enrolling '{name}' — this is {known}")
+            self._audio.say(f"I already know you as {known}. To change it, forget me first on the dashboard.")
+            self.enrollment = {"name": name, "running": False, "ok": False, "error": f"already known as {known}"}
             return False
         self.enrollment = {"name": name, "running": True, "captured": 0, "total": 15, "ok": None}
         self._audio.say(f"Hi {name}! Stay still and look at me, this takes a few seconds.")
@@ -519,12 +527,13 @@ class MindService:
         profile   = self._memory.get_person(person_id)
         episodes  = self._memory.recent_episodes(3, who=person_id)
         context   = (
-            f"Stai salutando {display_name}. "
-            + (f"Lo conosci da {profile['interaction_count']} interazioni. " if profile else "")
-            + ("Ricordi recenti: " + "; ".join(e["what"] for e in episodes) if episodes else "")
+            f"The person in front of you is {display_name}: that is their name, and the only name to use. "
+            + (f"You have met {profile['interaction_count']} times. " if profile else "")
+            + ("Recently: " + "; ".join(e["what"] for e in episodes) if episodes else "")
         )
         greeting  = self._think(
-            f"Saluta {display_name} in modo breve e caloroso.", context=context, trigger="saluto"
+            f"Greet {display_name} warmly in one short sentence. Call them {display_name}, nothing else.",
+            context=context, trigger="greet"
         )
         self._audio.say(greeting)
         self._memory.upsert_person(person_id, display_name, familiarity_delta=0.05)

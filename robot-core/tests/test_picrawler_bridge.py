@@ -900,3 +900,16 @@ def test_the_name_said_again_is_not_part_of_the_command():
     mic._handle_text("spurghi come stai", final=True)            # "Spooky, come stai?" once more
     mic._emit_command()
     assert commands == ["come come stai"]
+
+
+def test_a_known_face_is_not_enrolled_under_another_name(vision, tmp_path):
+    v, bus, _, _ = vision
+    me = unit(1)
+    v._db.enroll_person("padrone", "Padrone", [me], v._recognizer)
+    v._process_body_faces(snap(face(4, near(me, 3))))
+    assert v.known_in_view() == "Padrone"
+    from services.mind import MindService
+    mind = MindService.__new__(MindService)
+    mind.enrollment, mind._vision, mind._audio = {}, v, FakeAudio()
+    assert mind.enroll("Giulia") is False
+    assert "already know you as Padrone" in mind._audio.said[0][0]
