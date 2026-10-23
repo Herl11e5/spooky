@@ -162,7 +162,9 @@ class LearningService:
         self._engagement_score[person_id] = new_score
         # Boost familiarity on engagement
         delta = 0.05 if engaged else 0.01
-        self._memory.upsert_person(person_id, person_id, familiarity_delta=delta)
+        # Keep the name the person was enrolled with: the id is lower case ("padrone").
+        known = self._memory.get_person(person_id) or {}
+        self._memory.upsert_person(person_id, known.get("display_name") or person_id, familiarity_delta=delta)
 
     def tune_parameter(
         self,

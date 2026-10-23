@@ -781,3 +781,26 @@ def test_its_own_voice_does_not_wake_it():
     mic._own_until = 0.0                                      # the tail has passed
     mic._handle_text("spooky come stai", final=True)
     assert "woke" in heard
+
+
+def test_engagement_keeps_the_enrolled_name(tmp_path):
+    import time as _t
+    from services.memory import MemoryService
+    from services.learning import LearningService
+    mem = MemoryService(RecordingBus(), db_path=tmp_path / "m.db")
+    mem.start()
+    mem.upsert_person("padrone", "Padrone")
+    learning = LearningService.__new__(LearningService)
+    learning._memory, learning._interaction_counts, learning._engagement_score = mem, {}, {}
+    for _ in range(50):
+        if mem.get_person("padrone"):
+            break
+        _t.sleep(0.02)
+    learning.record_engagement("padrone", engaged=True)
+    for _ in range(50):
+        p = mem.get_person("padrone")
+        if p and p["interaction_count"] >= 2:
+            break
+        _t.sleep(0.02)
+    mem.stop()
+    assert mem.get_person("padrone")["display_name"] == "Padrone"
