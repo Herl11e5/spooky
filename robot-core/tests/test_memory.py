@@ -1,7 +1,6 @@
 """Tests for MemoryService (services/memory.py)."""
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -23,7 +22,7 @@ def test_add_and_query_episode():
     mem, bus = _make_memory()
     try:
         mem.add_episode(what="hello world", who="test_user")
-        time.sleep(0.15)
+        assert mem.flush()
         rows = mem.recent_episodes(n=5)
         assert any("hello world" in r["what"] for r in rows)
     finally:
@@ -34,7 +33,7 @@ def test_upsert_and_get_fact():
     mem, bus = _make_memory()
     try:
         mem.upsert_fact("user_name", "Marco", confidence=1.0)
-        time.sleep(0.15)
+        assert mem.flush()
         val = mem.get_fact("user_name")
         assert val == "Marco"
     finally:
@@ -45,7 +44,7 @@ def test_all_facts():
     mem, bus = _make_memory()
     try:
         mem.upsert_fact("color", "blue")
-        time.sleep(0.15)
+        assert mem.flush()
         facts = mem.all_facts()
         assert isinstance(facts, list)
         keys = [f["key"] for f in facts]
@@ -58,7 +57,7 @@ def test_param_roundtrip():
     mem, bus = _make_memory()
     try:
         mem.set_param("track_face", "gain", 0.2, confidence=0.8)
-        time.sleep(0.15)
+        assert mem.flush()
         val = mem.get_param("track_face", "gain")
         assert abs(float(val) - 0.2) < 0.001
     finally:
@@ -78,7 +77,7 @@ def test_upsert_person():
     mem, bus = _make_memory()
     try:
         mem.upsert_person("marco", "Marco Rossi", familiarity_delta=0.1)
-        time.sleep(0.15)
+        assert mem.flush()
         persons = mem.all_persons()
         ids = [p["person_id"] for p in persons]
         assert "marco" in ids
@@ -90,7 +89,7 @@ def test_get_person():
     mem, bus = _make_memory()
     try:
         mem.upsert_person("alice", "Alice", familiarity_delta=0.0)
-        time.sleep(0.15)
+        assert mem.flush()
         p = mem.get_person("alice")
         assert p is not None
         assert p["display_name"] == "Alice"
@@ -112,7 +111,7 @@ def test_summary_includes_facts():
     mem, bus = _make_memory()
     try:
         mem.upsert_fact("user_name", "Marco", confidence=1.0)
-        time.sleep(0.15)
+        assert mem.flush()
         s = mem.summary()
         assert "Marco" in s
     finally:

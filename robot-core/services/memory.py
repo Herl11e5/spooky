@@ -158,6 +158,12 @@ class MemoryService:
     def _enqueue_write(self, sql: str, params: tuple = ()) -> None:
         self._write_q.put((sql, params))
 
+    def flush(self, timeout: float = 5.0) -> bool:
+        """Wait until every write queued so far is committed."""
+        done = threading.Event()
+        self._write_q.put(done)
+        return done.wait(timeout)
+
     def _write_loop(self) -> None:
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
@@ -165,6 +171,9 @@ class MemoryService:
             item = self._write_q.get()
             if item is None:
                 break
+            if isinstance(item, threading.Event):
+                item.set()                    # flush(): everything before it is written
+                continue
             sql, params = item
             try:
                 conn.execute(sql, params)
