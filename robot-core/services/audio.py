@@ -752,7 +752,8 @@ class AudioInput:
 
         elif self._state == self._STATE_ACTIVE:
             if final and text:
-                self._command_parts.append(text)
+                again = wake_match(text, self._wake_word)   # the name said again: not part of the command
+                self._command_parts.append(text if again is None else again)
                 self._last_speech_ts = time.time()
 
             # Silence timeout → emit command

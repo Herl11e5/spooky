@@ -887,3 +887,16 @@ def test_after_a_lone_name_it_waits_longer_for_the_command_to_start():
     mic._wake  # once words came, the usual 1.5 s of silence ends it
     mic._command_parts = ["parla più forte"]
     assert (mic._command_timeout if any(mic._command_parts) else mic._FIRST_WORDS_S) == 1.5
+
+
+def test_the_name_said_again_is_not_part_of_the_command():
+    from services.audio import AudioInput
+    from core.bus import EventType
+    bus = Bus()
+    commands = []
+    bus.subscribe(EventType.COMMAND_PARSED, lambda ev: commands.append(ev["command"]))
+    mic = AudioInput(bus)
+    mic._wake("come", "spurghi come")
+    mic._handle_text("spurghi come stai", final=True)            # "Spooky, come stai?" once more
+    mic._emit_command()
+    assert commands == ["come come stai"]
