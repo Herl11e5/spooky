@@ -929,3 +929,58 @@ def test_a_known_face_is_not_enrolled_under_another_name(vision, tmp_path):
 def test_fixed_commands_need_their_whole_phrase(said, action):
     from services.mind import builtin
     assert builtin(said) == action
+
+
+class NapMotor:
+    def __init__(self, allowed=True):
+        self.allowed, self.calls = allowed, []
+
+    def sit(self):
+        self.calls.append("sit")
+        return self.allowed
+
+    def stand(self):
+        self.calls.append("stand")
+        return self.allowed
+
+
+@pytest.fixture
+def nap():
+    from core.modes import Mode
+    from skills.nap_skill import NapSkill
+    bus, modes, audio, motor, t = Bus(), FakeModes(Mode.COMPANION_DAY), FakeAudio(), NapMotor(), [0.0]
+    state = {"mode": "active"}
+    skill = NapSkill(bus, modes, audio, motor, lambda: state, nap_after_s=300, clock=lambda: t[0])
+    return skill, bus, audio, motor, t, state
+
+
+def test_nobody_around_it_naps_and_a_known_face_wakes_it(nap):
+    skill, bus, audio, motor, t, state = nap
+    from core.bus import EventType
+    t[0] = 200; skill.check()
+    assert motor.calls == []                                        # not yet
+    t[0] = 301; skill.check()
+    assert motor.calls == ["sit"] and skill.napping and audio.said[-1][1] == "sleepy"
+    state["mode"] = "disabled"
+    bus.publish(EventType.PERSON_IDENTIFIED, {"person_id": "padrone", "display_name": "Padrone"})
+    assert motor.calls == ["sit", "stand"] and not skill.napping
+    assert "Padrone" in audio.said[-1][0]
+
+
+def test_company_keeps_it_awake(nap):
+    skill, bus, audio, motor, t, state = nap
+    from core.bus import EventType
+    for minute in range(1, 20):
+        t[0] = minute * 60
+        bus.publish(EventType.PERSON_DETECTED, {"track_id": 1})
+        skill.check()
+    assert motor.calls == []
+
+
+def test_not_allowed_to_move_it_stays_as_it_is(nap):
+    skill, bus, audio, motor, t, state = nap
+    motor.allowed = False
+    t[0] = 400; skill.check()
+    assert not skill.napping and audio.said == []                  # refused: no announcement
+    t[0] = 500; skill.check()
+    assert motor.calls == ["sit"]                                   # and it does not keep asking

@@ -215,6 +215,9 @@ class RobotRuntime:
         # ── Skills ────────────────────────────────────────────────────────────────
         from skills.empathy_skill import EmpathySkill
         self._empathy = EmpathySkill(self._bus, self._modes, self._audio, self._motor)
+        from skills.nap_skill import NapSkill
+        self._nap = NapSkill(self._bus, self._modes, self._audio, self._motor,
+                             lambda: self._body.state) if self._body else None
         from services.body_watch import BodyWatch
         self._body_watch = BodyWatch(lambda: self._body.state, self._audio) if self._body else None
         self._skill_track = TrackFaceSkill(
@@ -316,6 +319,8 @@ class RobotRuntime:
         self._empathy.start()
         if self._body_watch:
             self._body_watch.start()
+        if self._nap:
+            self._nap.start()
         self._skill_idle.start()
         self._active = True
 
@@ -336,6 +341,8 @@ class RobotRuntime:
         self._empathy.stop()
         if self._body_watch:
             self._body_watch.stop()
+        if self._nap:
+            self._nap.stop()
         self._skill_idle.stop()
         self._skill_patrol.stop()
         self._skill_play.stop()

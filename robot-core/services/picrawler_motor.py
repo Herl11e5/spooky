@@ -171,13 +171,14 @@ class PicrawlerMotorService:
 
     # ── posture ───────────────────────────────────────────────────────────────
 
-    def stand(self) -> None:
+    def stand(self) -> bool:
+        """True when the body agreed (it refuses the brain unless allowed on the dashboard)."""
         self._posture = Posture.STAND
-        self._body.enable()
+        return bool(self._body.enable())
 
-    def sit(self) -> None:
+    def sit(self) -> bool:
         self._posture = Posture.SIT
-        self._body.disable()
+        return bool(self._body.disable())
 
     # ── looking: the body leans and turns, there is no head ──────────────────
 
