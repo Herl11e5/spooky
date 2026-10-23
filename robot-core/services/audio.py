@@ -486,9 +486,16 @@ class WakeSpotter:
     or more words is the middle of somebody's sentence, and is ignored. (Asking the
     language model whether the words were meant for the robot was measured and does
     not work: on short garbled fragments gemma3 put "cosa vedi" among the overheard.)
+
+    What does tell them apart is how long the "name" lasts. Saying "spooky" takes half
+    a second; forced to choose, the grammar recogniser stretches the name over whole
+    stretches of somebody else's talk. Measured 2026-10-23: the user's calls 0.31,
+    0.51, 0.54, 0.66 s; colleagues' talk 1.98, 3.09, 3.96, 4.11, 4.74, 6.45, 7.68,
+    8.16, 17.10 s. Only a name of 0.2–1.2 s counts.
     """
 
     _NAME_S = 0.3          # the command starts this long after the name begins
+    _NAME_LEN_S = (0.2, 1.2)  # how long a spoken "spooky" lasts; longer is other people's talk
     _GLUED_S = 0.3         # a word ending this close before the name runs into it
     _GREETINGS = frozenset({"ciao", "ehi", "ei", "hey", "oh", "senti", "ok", "okay", "salve",
                             "buongiorno", "buonasera", "dai"})
@@ -511,9 +518,13 @@ class WakeSpotter:
         for w in words:
             if w.get("word") == self._word:
                 strict = self._strict_fn is not None and self._strict_fn()
-                ok = w.get("conf", 0.0) >= (self._strict_conf if strict else self._min_conf)
-                log.info(f"Name spotted at {w['start']:.1f}s, confidence {w.get('conf', 0.0):.2f}"
-                         f"{' (body moving)' if strict else ''}{'' if ok else ' — too unsure'}")
+                length = float(w.get("end", w["start"])) - float(w["start"])
+                sure = w.get("conf", 0.0) >= (self._strict_conf if strict else self._min_conf)
+                spoken = self._NAME_LEN_S[0] <= length <= self._NAME_LEN_S[1]
+                ok = sure and spoken
+                log.info(f"Name spotted at {w['start']:.1f}s, {length:.2f} s long, confidence "
+                         f"{w.get('conf', 0.0):.2f}{' (body moving)' if strict else ''}"
+                         f"{'' if sure else ' — too unsure'}{'' if spoken or not sure else ' — too long or short for the name'}")
                 if ok:
                     self._name_start = float(w["start"])
                     self._name_s = float(w.get("end", w["start"])) - float(w["start"])

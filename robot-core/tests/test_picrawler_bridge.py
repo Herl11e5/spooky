@@ -834,6 +834,17 @@ def test_a_name_in_the_middle_of_a_sentence_is_someone_else_talking():
     assert spot.poll(7.0) is None
 
 
+def test_a_name_stretched_over_seconds_of_talk_is_not_a_call():
+    from services.audio import WakeSpotter
+    spot = WakeSpotter()
+    spot.spotted([_w("spooky", 7.2, 10.29)])                        # 3.09 s, colleagues, measured
+    spot.heard([_w("però", 7.2, 7.5), _w("quindi", 10.4, 10.8), _w("è", 10.9, 11.0), _w("felice", 11.0, 11.5)])
+    assert spot.poll(12.0) is None
+    spot.spotted([_w("spooky", 20.0, 20.51)])                       # 0.51 s, the user, measured
+    spot.heard([_w("sputi", 20.0, 20.5), _w("alzati", 20.6, 21.0)])
+    assert spot.poll(22.0) == "alzati"
+
+
 def test_a_greeting_or_a_pause_before_the_name_is_a_call():
     from services.audio import WakeSpotter
     spot = WakeSpotter()
