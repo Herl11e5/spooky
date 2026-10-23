@@ -633,7 +633,8 @@ class MindService:
             memories = self._knowledge.recall(prompt)
             if memories:
                 context = ((context + "\n\n") if context else "") + (
-                    "What you remember that may matter here (use it naturally, never list it):\n"
+                    "What you remember that may matter here (use it naturally, never list it; "
+                    "[maybe] is something you noticed only once, so do not state it as certain):\n"
                     + "\n".join(f"- {m}" for m in memories))
         face = self._vision.expression_now() if self._vision is not None and hasattr(self._vision, "expression_now") else None
         if face and face.get("expression") not in (None, "neutral"):

@@ -116,7 +116,8 @@ def test_sleep_turns_the_day_into_facts_and_merges_repeats(mem):
     facts = {f["text"]: f for f in k.facts()}
     assert len(facts) == 2
     coffee = facts["Samuele drinks coffee at nine every morning"]
-    assert coffee["count"] == 2 and coffee["confidence"] == pytest.approx(0.75)
+    assert coffee["count"] == 2 and coffee["confidence"] == pytest.approx(0.7)    # 0.5 at first, +0.2
+    assert facts["The printer jams on Mondays"]["confidence"] == pytest.approx(0.5) # seen once: a guess
     assert k.recall("when does Samuele drink coffee every morning?")[0].startswith("[known] Samuele drinks coffee")
 
 

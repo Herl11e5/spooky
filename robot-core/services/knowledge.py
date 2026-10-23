@@ -137,6 +137,10 @@ class KnowledgeService:
         self._max_pending = int(get("consolidate_when_pending", 300))
         self._hour = int(get("consolidate_hour", 3))
         self._same = float(get("same_fact_cosine", 0.85))
+        # A fact is not believed on its first observation (spooky's original rule): it
+        # starts at most at `first_conf` and each confirmation adds `confirm_step`.
+        self._first_conf = float(get("first_confidence", 0.5))
+        self._confirm_step = float(get("confirm_step", 0.2))
         self._min_sim = float(get("recall_min_cosine", 0.45))
 
         db_path = Path(db_path)
@@ -259,10 +263,12 @@ class KnowledgeService:
                     for i in np.argsort(-sims)[:k]:
                         if sims[i] < self._min_sim:
                             break
-                        row = self._db.execute("SELECT text, about FROM knowledge WHERE id=?",
+                        row = self._db.execute("SELECT text, about, count FROM knowledge WHERE id=?",
                                                (ids[i],)).fetchone()
                         if row:
-                            lines.append((float(sims[i]) + 0.05, f"[known] {row[0]}"))
+                            # Seen once is a guess: the mind is told so, and confirmed facts rank first.
+                            tag = "[known]" if row[2] >= 2 else "[maybe]"
+                            lines.append((float(sims[i]) + 0.02 * min(row[2], 3), f"{tag} {row[0]}"))
             with self._lock:
                 rows = self._db.execute(
                     "SELECT ts, kind, text, who, emb FROM observations "
@@ -352,8 +358,8 @@ class KnowledgeService:
             "preferences, plans, relationships, what they told Spooky), about the place "
             "(objects, routines, schedules) and about Spooky itself. Skip small talk, "
             "recognition garbage, and anything uncertain. Never invent.\n\n"
-            "Already known (repeat a fact only if it changed):\n"
-            + ("\n".join(f"- {k}" for k in known if k.startswith("[known]")) or "- nothing yet")
+            "Already known (repeat a fact only if it changed, or to confirm a [maybe]):\n"
+            + ("\n".join(f"- {k}" for k in known if k.startswith(("[known]", "[maybe]"))) or "- nothing yet")
             + f"\n\nPerceived:\n{lines}\n\n"
             'Answer with JSON: {"facts": [{"about": "<person name, or place, or spooky>", '
             '"fact": "<one short English sentence>", "confidence": <0..1>}]} — an empty list '
@@ -378,7 +384,7 @@ class KnowledgeService:
         rows = list(matrix) if matrix is not None else []    # grows as this batch adds facts
         with self._lock:
             for fact, text, e in zip(facts, texts, embs):
-                conf = float(min(1.0, max(0.0, fact.get("confidence", 0.6))))
+                conf = float(min(self._first_conf, max(0.0, fact.get("confidence", 0.5))))
                 about = str(fact.get("about", ""))[:60]
                 sims = np.stack(rows) @ e if rows else np.zeros(0)
                 best = int(np.argmax(sims)) if len(sims) else -1
@@ -386,8 +392,8 @@ class KnowledgeService:
                     # Heard again: more certain, and the newer wording wins (facts change).
                     self._db.execute(
                         "UPDATE knowledge SET text=?, about=?, emb=?, count=count+1, updated=?, "
-                        "confidence=MIN(1.0, MAX(confidence, ?) + 0.05) WHERE id=?",
-                        (text, about, _blob(e), now, conf, ids[best]))
+                        "confidence=MIN(1.0, MAX(confidence, ?) + ?) WHERE id=?",
+                        (text, about, _blob(e), now, conf, self._confirm_step, ids[best]))
                     rows[best] = e
                 else:
                     cur = self._db.execute(
@@ -408,6 +414,9 @@ class KnowledgeService:
                              (now - self._keep_obs_s,))
             self._db.execute("DELETE FROM knowledge WHERE count < 2 AND confidence < 0.6 AND updated < ?",
                              (now - self._forget_s,))
+            # Facts learnt before the rule above held, believed on one sighting.
+            self._db.execute("UPDATE knowledge SET confidence = MIN(confidence, ?) WHERE count < 2",
+                             (self._first_conf,))
             self._db.commit()
         self._invalidate()
 
