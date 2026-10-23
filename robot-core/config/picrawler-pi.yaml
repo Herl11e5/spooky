@@ -12,6 +12,7 @@ dashboard:
 audio:
   mic_device: "USB PnP Sound Device"   # the USB microphone (sounddevice matches by name)
   speaker_enable_pin: 20               # Robot HAT amplifier enable (robot_hat: spk_en)
+  command_timeout_s: 1.5               # the command ends after this much silence
   # Spooky speaks English (the Italian voices were unlistenable). Until a voice is chosen:
   # a young southern-English man from Piper's VCTK set, on the Pi itself. Or tts_method:
   # droid for spooky's own whistle-and-click language (services/droid_voice.py).

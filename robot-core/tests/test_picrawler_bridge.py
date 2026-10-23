@@ -3,6 +3,7 @@ import json
 import math
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -804,3 +805,58 @@ def test_engagement_keeps_the_enrolled_name(tmp_path):
         _t.sleep(0.02)
     mem.stop()
     assert mem.get_person("padrone")["display_name"] == "Padrone"
+
+
+def _w(word, start, end, conf=1.0):
+    return {"word": word, "start": start, "end": end, "conf": conf}
+
+
+def test_the_name_in_a_partial_takes_the_words_after_it_as_the_command():
+    from services.audio import WakeSpotter
+    spot = WakeSpotter()
+    spot.partial([_w("spooky", 12.9, 13.3)])
+    assert spot.poll(13.4) is None                                  # free recognition not done yet
+    spot.heard([_w("che", 12.6, 12.8), _w("sporchi", 12.9, 13.3), _w("come", 13.4, 13.6), _w("stai", 13.6, 13.9)])
+    assert spot.poll(14.0) == "come stai"
+    assert spot.poll(14.5) is None                                  # once only
+    spot.partial([_w("spooky", 12.9, 13.3)])                        # the same segment again: no
+    assert spot.poll(20.0) is None
+
+
+def test_a_late_final_still_wakes_it_with_the_right_command():
+    from services.audio import WakeSpotter
+    spot = WakeSpotter()
+    spot.heard([_w("piacere", 0.9, 1.2), _w("un", 1.2, 1.3), _w("grande", 1.4, 1.8)])
+    spot.heard([_w("bianco", 4.3, 4.7)])
+    spot.spotted([_w("spooky", 0.0, 10.5)])                        # final after ten seconds, end smeared
+    assert spot.poll(11.0) == "piacere un grande"
+
+
+def test_a_lone_name_wakes_it_with_no_command_yet():
+    from services.audio import WakeSpotter
+    spot = WakeSpotter()
+    spot.partial([_w("spooky", 0.0, 0.4)])
+    assert spot.poll(1.0) is None
+    assert spot.poll(3.0) == ""                                     # nothing followed: listen
+
+
+def test_an_unsure_late_spot_is_ignored():
+    from services.audio import WakeSpotter
+    spot = WakeSpotter()
+    spot.spotted([_w("spooky", 5.0, 5.3, conf=0.6), _w("[unk]", 5.3, 6.0)])
+    assert spot.poll(10.0) is None
+
+
+def test_a_command_ends_after_silence_without_more_speech():
+    from services.audio import AudioInput
+    from core.bus import EventType
+    bus = Bus()
+    commands = []
+    bus.subscribe(EventType.COMMAND_PARSED, lambda ev: commands.append(ev["command"]))
+    mic = AudioInput(bus, command_timeout_s=1.5)
+    mic._wake("come stai", "(spotted) come stai")
+    assert commands == []
+    mic._last_speech_ts -= 2.0                                      # 2 s of silence
+    if mic._state == mic._STATE_ACTIVE and time.time() - mic._last_speech_ts >= mic._command_timeout:
+        mic._emit_command()
+    assert commands == ["come stai"]

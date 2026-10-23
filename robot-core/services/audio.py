@@ -432,6 +432,66 @@ def wake_match(text: str, wake_word: str = "spooky") -> Optional[str]:
     return None
 
 
+class WakeSpotter:
+    """
+    The name, listened for on its own. Free recognition with the Italian model never
+    writes "spooky" — the word is in the model's vocabulary but improbable in Italian,
+    so it comes out as "sporchi", "a", "no road". A second recogniser on the same audio,
+    whose grammar allows only the name or [unk], is forced to choose: on the user's own
+    voice it found every "spooky" (confidence 1.0) and nothing in the rest of the speech.
+
+    It is read from its partial results, which update every half second: its final
+    result can come ten seconds late, when it has a lot of other speech to file as
+    [unk]. Both recognisers time their words on the same stream, so the command is
+    what the free one heard from just after the name.
+    """
+
+    _NAME_S = 0.3          # the command starts this long after the name begins
+
+    def __init__(self, wake_word: str = "spooky", min_conf: float = 0.85, wait_s: float = 2.5) -> None:
+        self._word = wake_word.lower()
+        self._min_conf = min_conf
+        self._wait = wait_s
+        self._name_start: Optional[float] = None   # a name heard, its command not yet taken
+        self._fired = False                         # this grammar segment already woke it
+        self._utterances: List[list] = []          # recent free-recognition words
+
+    def partial(self, words: list) -> None:
+        """Words of a partial result from the grammar recogniser (SetPartialWords)."""
+        if not self._fired:
+            for w in words:
+                if w.get("word") == self._word:
+                    self._name_start, self._fired = float(w["start"]), True
+                    return
+
+    def spotted(self, words: list) -> None:
+        """Words of a final result from the grammar recogniser: a late catch, then a new segment."""
+        if not self._fired:
+            for w in words:
+                if w.get("word") == self._word and w.get("conf", 0.0) >= self._min_conf:
+                    self._name_start = float(w["start"])
+                    break
+        self._fired = False
+
+    def heard(self, words: list) -> None:
+        """Words of a final result from the free recogniser."""
+        if words:
+            self._utterances = (self._utterances + [words])[-4:]
+
+    def poll(self, now_s: float) -> Optional[str]:
+        """The command after the name once it is known ("" if nothing followed), else None."""
+        if self._name_start is None:
+            return None
+        begin = self._name_start + self._NAME_S
+        covering = [u for u in self._utterances if float(u[-1]["end"]) >= begin]
+        if not covering and now_s - self._name_start < self._wait:
+            return None                            # the free recogniser has not finished it yet
+        command = [w["word"] for w in covering[0] if float(w["start"]) >= begin] if covering else []
+        self._name_start = None
+        self._utterances = []
+        return " ".join(command)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # STT + wake-word — AudioInput
 # ══════════════════════════════════════════════════════════════════════════════
@@ -547,6 +607,13 @@ class AudioInput:
         model = vosk.Model(str(self._vosk_model_path))
         # Vosk always expects 16000 Hz
         rec = vosk.KaldiRecognizer(model, 16000)
+        rec.SetWords(True)
+        # The name, spotted by a recogniser that may only hear it or [unk] (WakeSpotter).
+        kws = vosk.KaldiRecognizer(model, 16000, json.dumps([self._wake_word, "[unk]"]))
+        kws.SetWords(True)
+        kws.SetPartialWords(True)
+        spotter = WakeSpotter(self._wake_word)
+        stream_s = 0.0
 
         # Auto-detect a working sample rate for the device
         hw_rate = self._detect_samplerate(sd)
@@ -572,8 +639,14 @@ class AudioInput:
                     # Resample to 16000 Hz if needed (numpy — Python 3.13 safe)
                     if hw_rate != 16000:
                         raw = self._resample_numpy(raw, hw_rate, 16000)
+                    stream_s += len(raw) / 32000.0
+                    if kws.AcceptWaveform(raw):
+                        spotter.spotted(json.loads(kws.Result()).get("result", []))
+                    else:
+                        spotter.partial(json.loads(kws.PartialResult()).get("partial_result", []))
                     if rec.AcceptWaveform(raw):
                         result = json.loads(rec.Result())
+                        spotter.heard(result.get("result", []))
                         text   = result.get("text", "").strip()
                         if text:
                             self._handle_text(text, final=True)
@@ -581,6 +654,15 @@ class AudioInput:
                         partial = json.loads(rec.PartialResult()).get("partial", "").strip()
                         if partial:
                             self._handle_text(partial, final=False)
+                    command = spotter.poll(stream_s)
+                    if command is not None:
+                        self._wake(command, f"(spotted) {command}")
+                    # The command ends after a silence — checked here, every half second:
+                    # waiting for the next transcript to check it left a command hanging
+                    # until somebody spoke again.
+                    if (self._state == self._STATE_ACTIVE
+                            and time.time() - self._last_speech_ts >= self._command_timeout):
+                        self._emit_command()
         except Exception as e:
             log.error(f"AudioInput stream error: {e}")
 
@@ -629,21 +711,7 @@ class AudioInput:
         if self._state == self._STATE_IDLE:
             remainder = wake_match(text, self._wake_word)
             if remainder is not None:
-                log.info(f"Wake word detected: '{text}'")
-                self._bus.publish(
-                    EventType.WAKE_WORD_DETECTED,
-                    {"transcript": text},
-                    source="AudioInput",
-                )
-                self._bus.publish(
-                    EventType.MIC_STATE_CHANGED,
-                    {"state": "listening"},
-                    source="AudioInput",
-                )
-                # What followed the name is the start of the command
-                self._state = self._STATE_ACTIVE
-                self._command_parts = [remainder] if remainder else []
-                self._last_speech_ts = time.time()
+                self._wake(remainder, text)
 
         elif self._state == self._STATE_ACTIVE:
             if final and text:
@@ -653,6 +721,17 @@ class AudioInput:
             # Silence timeout → emit command
             if time.time() - self._last_speech_ts >= self._command_timeout:
                 self._emit_command()
+
+    def _wake(self, remainder: str, heard: str) -> None:
+        """The name was heard: listen for a command, starting with what followed it."""
+        if self._state != self._STATE_IDLE or time.time() < self._own_until:
+            return
+        log.info(f"Wake word detected: '{heard}'")
+        self._bus.publish(EventType.WAKE_WORD_DETECTED, {"transcript": heard}, source="AudioInput")
+        self._bus.publish(EventType.MIC_STATE_CHANGED, {"state": "listening"}, source="AudioInput")
+        self._state = self._STATE_ACTIVE
+        self._command_parts = [remainder] if remainder else []
+        self._last_speech_ts = time.time()
 
     def _emit_command(self) -> None:
         cmd = " ".join(p for p in self._command_parts if p).strip()
