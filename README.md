@@ -39,6 +39,8 @@ la precedenza. È la divisione `robotd`/client di microduck.
   osservazione; prima di ogni risposta richiama i ricordi più vicini per significato
   (embeddinggemma); ogni notte li distilla in fatti duraturi (gemma3) e cancella il testo grezzo.
   Un fatto sentito una volta sola resta un'ipotesi («[maybe]») finché non lo risente.
+  Cosa tiene di ciò che sente intorno si sceglie dalla dashboard: tutto, solo mentre c'è
+  qualcuno che conosce (nei due minuti prima), o solo quello che gli si dice.
 - **Voce**: risponde in inglese con la propria lingua droide (`services/droid_voice.py`);
   capisce l'italiano (Vosk). Il nome lo cerca un secondo riconoscitore che conosce solo
   «spooky» (`WakeSpotter`): il modello italiano da solo non lo scrive mai. Mentre il corpo si

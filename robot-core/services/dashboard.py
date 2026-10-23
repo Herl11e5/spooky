@@ -13,7 +13,8 @@ DELETE /api/persons/<id> → forget a person (face data and memory)
 GET  /api/faces   → body face track id → who spooky thinks it is
 GET/POST /api/volume {"volume": 0..100} → how loud it speaks (0 = silent, words still in the chat)
 GET  /api/knowledge → what it has learnt + stats; POST /api/knowledge/consolidate (sleep now),
-     POST /api/knowledge/ambient {"on"}, DELETE /api/knowledge/<id> (forget a fact)
+     POST /api/knowledge/ambient {"mode": all|known|off} (or the older {"on"}),
+     DELETE /api/knowledge/<id> (forget a fact)
 POST /api/mode    → switch mode    {"mode": "..."}
 POST /api/summarize
 GET  /stream      → SSE live events
@@ -323,8 +324,15 @@ class DashboardService:
         def api_ambient():
             if self._knowledge is None:
                 return jsonify({"ok": False}), 404
-            self._knowledge.set_ambient(bool((request.get_json(silent=True) or {}).get("on")))
-            return jsonify({"ok": True, "ambient": self._knowledge.ambient})
+            body = request.get_json(silent=True) or {}
+            try:
+                if "mode" in body:
+                    self._knowledge.set_ambient_mode(str(body["mode"]))
+                else:
+                    self._knowledge.set_ambient(bool(body.get("on")))
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+            return jsonify({"ok": True, "ambient": self._knowledge.ambient, "mode": self._knowledge.ambient_mode})
 
         @app.route("/api/knowledge/<int:fact_id>", methods=["DELETE"])
         def api_forget_fact(fact_id):

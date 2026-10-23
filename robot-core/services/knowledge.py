@@ -45,6 +45,9 @@ from core.bus import EventBus, EventType
 
 log = logging.getLogger(__name__)
 
+AMBIENT_MODES = ("all", "known", "off")
+_KNOWN_NEAR_S = 120.0     # "known": someone it knows seen this recently counts as there
+
 _SCHEMA = """
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS observations (
@@ -149,7 +152,14 @@ class KnowledgeService:
         self._db.executescript(_SCHEMA)
         self._lock = threading.RLock()
         self._consolidating = threading.Lock()
-        self._ambient = self._meta("ambient", str(bool(get("ambient", True)))) == "True"
+        # What it keeps of what it hears around it: "all"; "known" — only while someone
+        # it knows has been in view in the last two minutes, so colleagues talking at
+        # an empty desk are not kept; "off" — only what is said to it. Older settings
+        # were on/off.
+        mode = self._meta("ambient_mode", "")
+        if mode not in AMBIENT_MODES:
+            mode = "all" if self._meta("ambient", str(bool(get("ambient", True)))) == "True" else "off"
+        self._ambient_mode = mode
         self._who = ("", 0.0)                       # the person in view, and when
         self._met: dict[str, float] = {}
         self._last_heard = ""
@@ -176,7 +186,7 @@ class KnowledgeService:
         self._active = True
         threading.Thread(target=self._worker, daemon=True, name="Knowledge").start()
         log.info(f"KnowledgeService: {self.stats()['facts']} facts known, ambient listening "
-                 f"{'on' if self._ambient else 'off'}")
+                 f"{self._ambient_mode}")
 
     def stop(self) -> None:
         self._active = False
@@ -199,8 +209,10 @@ class KnowledgeService:
 
     def _on_heard(self, ev) -> None:
         text = (ev.get("text") or "").strip()
-        if not ev.get("final") or not self._ambient or len(text.split()) < self._min_words:
+        if not ev.get("final") or self._ambient_mode == "off" or len(text.split()) < self._min_words:
             return
+        if self._ambient_mode == "known" and self._clock() - self._who[1] > _KNOWN_NEAR_S:
+            return                            # nobody it knows around: not theirs to keep
         if ev.get("own") or (self._moving_fn is not None and self._moving_fn()):
             return                            # its own voice, or its own motors
         if text == self._last_heard:
@@ -475,12 +487,22 @@ class KnowledgeService:
 
     @property
     def ambient(self) -> bool:
-        return self._ambient
+        return self._ambient_mode != "off"
+
+    @property
+    def ambient_mode(self) -> str:
+        return self._ambient_mode
 
     def set_ambient(self, on: bool) -> None:
-        self._ambient = bool(on)
-        self._meta("ambient", str(self._ambient), write=True)
-        log.info(f"KnowledgeService: ambient listening {'on' if on else 'off'}")
+        self.set_ambient_mode("all" if on else "off")
+
+    def set_ambient_mode(self, mode: str) -> None:
+        if mode not in AMBIENT_MODES:
+            raise ValueError(f"ambient mode must be one of {AMBIENT_MODES}")
+        self._ambient_mode = mode
+        self._meta("ambient_mode", mode, write=True)
+        self._meta("ambient", str(mode != "off"), write=True)
+        log.info(f"KnowledgeService: ambient listening {mode}")
 
     def facts(self, limit: int = 50) -> List[dict]:
         with self._lock:
@@ -514,7 +536,7 @@ class KnowledgeService:
                                      (self._clock() - 86400,)).fetchone()[0]
         last = float(self._meta("last_consolidation", "0"))
         return {"facts": facts, "pending": pending, "observations_24h": today,
-                "last_consolidation": last or None, "ambient": self._ambient,
+                "last_consolidation": last or None, "ambient": self.ambient, "ambient_mode": self._ambient_mode,
                 "consolidating": self._consolidating.locked()}
 
     def _meta(self, key: str, default: str, write: bool = False) -> str:

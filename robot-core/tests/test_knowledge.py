@@ -82,6 +82,23 @@ def test_ambient_listening_can_be_switched_off(mem, tmp_path):
     assert again.ambient is False                                                    # survives a restart
 
 
+def test_known_mode_keeps_talk_only_while_someone_it_knows_is_around(mem, tmp_path):
+    k, bus, emb, clock, _ = mem
+    heard = lambda: k._db.execute("SELECT COUNT(*) FROM observations WHERE kind='heard'").fetchone()[0]
+    k.set_ambient_mode("known")
+    bus.emit(EventType.SPEECH_TRANSCRIBED, text="colleghi che parlano alla scrivania vuota", final=True)
+    assert heard() == 0                                                              # nobody it knows
+    bus.emit(EventType.PERSON_IDENTIFIED, person_id="p1", display_name="Samuele")
+    clock.t += 60
+    bus.emit(EventType.SPEECH_TRANSCRIBED, text="Samuele dice che domani lavora da casa", final=True)
+    assert heard() == 1                                                              # the owner is here
+    clock.t += 200
+    bus.emit(EventType.SPEECH_TRANSCRIBED, text="e poi se ne sono andati tutti quanti", final=True)
+    assert heard() == 1                                                              # gone for minutes
+    again = KnowledgeService(Bus(), tmp_path / "knowledge.db", embedder=emb, clock=clock)
+    assert again.ambient_mode == "known" and again.stats()["ambient_mode"] == "known"
+
+
 def test_who_was_there(mem):
     k, bus, emb, clock, _ = mem
     bus.emit(EventType.PERSON_IDENTIFIED, person_id="p1", display_name="Samuele")
