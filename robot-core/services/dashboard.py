@@ -160,6 +160,8 @@ class DashboardService:
             s["mode"] = self._mm.current.value
             brain = getattr(self._mind, "_brain", None)
             s["llm"] = {"ok": bool(getattr(brain, "_ok", False)), "model": getattr(brain, "_model", None)}
+            from core.version import version
+            s["version"] = version()
             return jsonify(s)
 
         @app.route("/api/diag")

@@ -435,6 +435,10 @@ def main() -> None:
     log_level = "DEBUG" if args.debug else cfg.get("logging.level", "INFO")
     log_file  = ROOT / cfg.get("logging.file", "logs/spooky.log")
     setup_logging(level=log_level, log_file=log_file)
+    from core.version import version
+    v = version()
+    log.warning(f"Starting spooky: version={v.get('rev')}{' (uncommitted changes)' if v.get('dirty') else ''} "
+                f"cwd={os.getcwd()} pid={os.getpid()}")
 
     # Override mode if requested via CLI
     if args.mode:

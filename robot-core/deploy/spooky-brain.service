@@ -2,8 +2,10 @@
 # It never touches the hardware — picrawler.service (the body) does — so the two run
 # together. It moves the robot only while a person allows it on the dashboard.
 #
-#   sudo cp deploy/spooky-brain.service /etc/systemd/system/
-#   sudo systemctl daemon-reload && sudo systemctl enable --now spooky-brain
+# Installed and kept current by the robot's scripts/release.py (its release_agent.py
+# copies this file when a release changes it). The code runs from the live release,
+# ~/robot/current/spooky; the venv and data/ live in ~/robot/state/spooky.
+# First time only: sudo systemctl enable spooky-brain
 #
 # Never run the old spooky.service (direct SunFounder hardware access) alongside.
 
@@ -16,11 +18,11 @@ Wants=network-online.target
 User=spooky
 Group=spooky
 SupplementaryGroups=audio gpio
-WorkingDirectory=/home/spooky/spooky-brain
+WorkingDirectory=/home/spooky/robot/current/spooky
 Environment=PYTHONUNBUFFERED=1
 # Ollama on the Mac (gemma3:12b): text and vision
 Environment=OLLAMA_HOST=http://MacBook-Pro-di-Samuele.local:11434
-ExecStart=/home/spooky/spooky-brain/.venv/bin/python main.py --local-config config/picrawler-pi.yaml
+ExecStart=/home/spooky/robot/state/spooky/venv/bin/python main.py --local-config config/picrawler-pi.yaml
 Restart=on-failure
 RestartSec=5
 
