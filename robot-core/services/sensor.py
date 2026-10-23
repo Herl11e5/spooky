@@ -45,11 +45,14 @@ class EdgeDetector:
 
     def __init__(self,
                  pitch_threshold: float = 10.0,
-                 roll_threshold:  float = 10.0):
+                 roll_threshold:  float = 10.0,
+                 open_hardware: bool = True):
         self._pitch_thr = pitch_threshold
         self._roll_thr  = roll_threshold
         self._bus = None
         self._ok  = False
+        if not open_hardware:
+            return
         try:
             import smbus2
             b = smbus2.SMBus(1)
@@ -159,8 +162,9 @@ class SensorService:
         self._cpu_temp_c:  float = 0.0
         self._ram_free_mb: int   = 8192
 
-        # Edge detector (MPU6050)
-        self._edge = EdgeDetector()
+        # Edge detector (MPU6050). With a picrawler body, the body owns the IMU, as it
+        # owns every sensor: it watches falls and lifting itself (robot.yaml → imu).
+        self._edge = EdgeDetector(open_hardware=distance_fn is None)
         self._pitch: float = 0.0
         self._roll:  float = 0.0
 
