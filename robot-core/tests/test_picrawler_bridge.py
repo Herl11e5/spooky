@@ -369,6 +369,10 @@ from services.vision import EmbeddingRecognizer, FaceDatabase, VisionService
 class RecordingBus:
     def __init__(self):
         self.events = []
+        self.handlers = {}
+
+    def subscribe(self, event_type, handler):
+        self.handlers.setdefault(event_type, []).append(handler)
 
     def publish(self, event_type, payload=None, source=""):
         self.events.append((event_type, payload or {}))

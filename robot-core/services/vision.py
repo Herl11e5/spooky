@@ -548,6 +548,11 @@ class VisionService:
         # Detector + recognizer: the body's faces and embeddings, or a local cascade + LBPH
         self._faces_fn = faces_fn
         self._attention_fn = attention_fn
+        # A conversation comes first: the Mac's model answers one request at a time, and
+        # a question asked during a scene analysis waited over 30 s behind the photo.
+        self._talking_until = 0.0
+        for event in (EventType.COMMAND_PARSED, EventType.WAKE_WORD_DETECTED):
+            bus.subscribe(event, lambda ev: setattr(self, "_talking_until", time.time() + 60))
         self._track_ids: Dict[int, Tuple[Optional[str], float]] = {}   # body track → best identity
         # Expression of the face in front: a candidate becomes current once it has lasted.
         self._expr_candidate: Tuple[Optional[str], float] = (None, 0.0)
@@ -969,7 +974,9 @@ class VisionService:
             if not self._vision_model and now - last_resolve > 60:
                 self._vision_model = self._resolve_vision_model()   # the Mac may be back
                 last_resolve = now
-            if self._vision_model:
+            if now < self._talking_until:
+                pass                                   # someone is talking to it: later
+            elif self._vision_model:
                 if now - last_scene >= self._scene_interval:
                     self._analyze_scene()
                     last_scene = time.time()

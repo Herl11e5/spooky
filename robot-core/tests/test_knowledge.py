@@ -175,3 +175,12 @@ def test_its_own_voice_and_motors_are_not_remembered(tmp_path):
     moving[0] = False
     bus.emit(EventType.SPEECH_TRANSCRIBED, text="il caffè è pronto in cucina", final=True)
     assert k.stats()["pending"] == 1
+
+
+def test_no_sleep_while_someone_talks_to_it(mem):
+    k, bus, emb, clock, _ = mem
+    k.request_consolidation()
+    bus.emit(EventType.COMMAND_PARSED, command="come stai")
+    assert k._due() is False
+    clock.t += 61
+    assert k._due() is True

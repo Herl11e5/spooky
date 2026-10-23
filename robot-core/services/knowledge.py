@@ -153,6 +153,7 @@ class KnowledgeService:
         self._matrix_ids: list[int] = []
         self._wake = threading.Event()
         self._active = False
+        self._talking_until = 0.0     # no consolidation while someone talks to it
 
         for event, handler in ((EventType.SPEECH_TRANSCRIBED, self._on_heard),
                                (EventType.COMMAND_PARSED, self._on_told),
@@ -161,7 +162,8 @@ class KnowledgeService:
                                (EventType.OBJECTS_DETECTED, self._on_objects),
                                (EventType.PERSON_IDENTIFIED, self._on_met),
                                (EventType.PERSON_UNKNOWN, self._on_stranger),
-                               (EventType.EXPRESSION_CHANGED, self._on_expression)):
+                               (EventType.EXPRESSION_CHANGED, self._on_expression),
+                               (EventType.WAKE_WORD_DETECTED, self._on_talk)):
             bus.subscribe(event, handler)
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
@@ -203,7 +205,11 @@ class KnowledgeService:
         self.observe("heard", text)
 
     def _on_told(self, ev) -> None:
+        self._talking_until = self._clock() + 60
         self.observe("told", ev.get("command", ""))
+
+    def _on_talk(self, ev) -> None:
+        self._talking_until = self._clock() + 60
 
     def _on_said(self, ev) -> None:
         self.observe("said", ev.get("text", ""))
@@ -444,6 +450,8 @@ class KnowledgeService:
         return len(rows)
 
     def _due(self) -> bool:
+        if self._clock() < self._talking_until:
+            return False                       # the model is needed for the conversation
         if self._meta("consolidate_now", "0") == "1":
             return True
         stats = self.stats()
