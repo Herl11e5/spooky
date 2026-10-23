@@ -247,14 +247,15 @@ class BrainService:
             self._person_present = False
             self._alone_since = time.time()
 
+    # A loud sound or a sudden change wakes it up; the move it makes is
+    # skills/startle_skill.py's to choose — one place decides, or one clap became three.
     def _on_startle(self, ev) -> None:
-        self.push_reaction(7, "startle")
         with self._lock:
             self._energy = min(1.0, self._energy + 0.4)
 
     def _on_motion(self, ev) -> None:
-        if not self._person_present:
-            self.push_reaction(6, "alert")
+        with self._lock:
+            self._energy = min(1.0, self._energy + 0.2)
 
     def _on_picked_up(self, ev) -> None:
         with self._lock:

@@ -14,7 +14,7 @@ tiers based on how long the robot has been alone:
                     wanders, peek around objects. Activates after 3+ min alone.
 
 The skill also reacts immediately to:
-  - UNUSUAL_SOUND   → startle + investigate direction
+  - UNUSUAL_SOUND   → noted (the startle is skills/startle_skill.py's)
   - MOTION_DETECTED → snap attention toward motion
   - PICKED_UP       → react with "picked_up_react" choreography
   - PUT_DOWN        → orient after landing
@@ -67,7 +67,6 @@ class IdleBehaviorSkill(Skill):
         self._alone_since: float = time.time()
         self._last_sound_time: float = 0.0
         self._last_motion_time: float = 0.0
-        self._startle_pending  = False
         self._picked_up        = False
 
         bus.subscribe(EventType.PERSON_DETECTED,  self._on_person)
@@ -95,17 +94,6 @@ class IdleBehaviorSkill(Skill):
             # While person is present, just wait (skill stays alive)
             if self._person_present:
                 if not self.sleep(1.5):
-                    break
-                continue
-
-            # React to startle (sound/motion while alone)
-            if self._startle_pending:
-                self._startle_pending = False
-                self._choreo.play("startle", wait=True)
-                if not self.sleep(0.5):
-                    break
-                self._choreo.play("alert", wait=True)
-                if not self.sleep(1.0):
                     break
                 continue
 
@@ -223,15 +211,13 @@ class IdleBehaviorSkill(Skill):
         if to not in {m.value for m in self.allowed_modes}:
             self.stop()
 
+    # The startle itself (flinch, cry, a look round) is skills/startle_skill.py's;
+    # here a sudden change only counts as something happening.
     def _on_sound(self, ev) -> None:
-        if not self._person_present:
-            self._startle_pending = True
-            self._last_sound_time = time.time()
+        self._last_sound_time = time.time()
 
     def _on_motion(self, ev) -> None:
-        if not self._person_present:
-            self._startle_pending = True
-            self._last_motion_time = time.time()
+        self._last_motion_time = time.time()
 
     def _on_picked_up(self, ev) -> None:
         self._picked_up = True

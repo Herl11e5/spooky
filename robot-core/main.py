@@ -218,6 +218,9 @@ class RobotRuntime:
         from skills.nap_skill import NapSkill
         self._nap = NapSkill(self._bus, self._modes, self._audio, self._motor,
                              lambda: self._body.state) if self._body else None
+        from skills.startle_skill import StartleSkill
+        self._startle = StartleSkill(self._bus, self._modes, self._audio, self._motor,
+                                     (lambda: self._body.state) if self._body else None)
         from services.body_watch import BodyWatch
         self._body_watch = BodyWatch(lambda: self._body.state, self._audio) if self._body else None
         self._skill_track = TrackFaceSkill(
@@ -322,6 +325,7 @@ class RobotRuntime:
             self._body_watch.start()
         if self._nap:
             self._nap.start()
+        self._startle.start()
         self._skill_idle.start()
         self._active = True
 
@@ -344,6 +348,7 @@ class RobotRuntime:
             self._body_watch.stop()
         if self._nap:
             self._nap.stop()
+        self._startle.stop()
         self._skill_idle.stop()
         self._skill_patrol.stop()
         self._skill_play.stop()

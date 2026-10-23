@@ -24,7 +24,7 @@ Mapping:
       for every glance made it creep and wind round (158° in 40 s).
   nudge_toward           face tracking: leans after the face, and turns only once
                          the lean runs out — a face is worth facing.
-  wave, shake_head, nod, wiggle_dance, spin_head, pat_desk, hop, stretch
+  wave, shake_head, nod, wiggle_dance, spin_head, pat_desk, hop, stretch, flinch
       the body's gestures (body poses, no steps); hop becomes a bounce.
   climb, nudge           short walks.
   scan_environment       turns in steps on the compass, reading the distance each time.
@@ -248,6 +248,10 @@ class PicrawlerMotorService:
 
     def stretch(self) -> None:
         self._gesture("stretch")
+
+    def flinch(self) -> None:
+        """Startled (skills/startle_skill.py): back and down, a moment frozen."""
+        self._gesture("flinch")
 
     def climb(self) -> None:
         self.move_forward(distance=10, speed=40)

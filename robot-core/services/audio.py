@@ -528,6 +528,48 @@ class WakeSpotter:
 # STT + wake-word — AudioInput
 # ══════════════════════════════════════════════════════════════════════════════
 
+class LoudnessWatch:
+    """
+    A sudden loud sound — a clap, a bang, something dropped — in a chunk of audio.
+
+    Levels per 20 ms frame, in dB below full scale. Loud means all three at once:
+    at least `floor_dbfs`; at least `above_db` over the room (a slow average of the
+    chunks' median frames, so a loud chunk barely moves it); and reached from
+    `rise_db` lower within one frame — a clap starts at once, a voice swells, so
+    talking near it, even loudly, is not a bang. Measured on the robot's USB mic
+    (2026-10-23): the room at -42 dBFS, never above -29, at most 10 dB from one
+    frame to the next.
+    """
+
+    FRAME = 320                                    # 20 ms at 16 kHz
+
+    def __init__(self, floor_dbfs: float = -18.0, above_db: float = 22.0, rise_db: float = 15.0) -> None:
+        self.floor_dbfs, self.above_db, self.rise_db = floor_dbfs, above_db, rise_db
+        self.room_db: Optional[float] = None
+        self._last_db = -120.0
+
+    def feed(self, samples) -> Optional[dict]:
+        import numpy as np
+        n = len(samples) // self.FRAME * self.FRAME
+        if n == 0:
+            return None
+        frames = np.asarray(samples[:n], dtype=np.float32).reshape(-1, self.FRAME)
+        db = 20.0 * np.log10(np.sqrt((frames * frames).mean(axis=1)) / 32768.0 + 1e-9)
+        before = np.concatenate([[self._last_db], db[:-1]])
+        i = int(np.argmax(db))
+        peak, rise = float(db[i]), float(db[i] - before[i])
+        self._last_db = float(db[-1])
+        quiet = float(np.median(db))
+        if self.room_db is None:
+            self.room_db = quiet
+            return None
+        room = self.room_db
+        self.room_db += 0.05 * (quiet - room)      # ~10 s to follow the room
+        if peak >= self.floor_dbfs and peak - room >= self.above_db and rise >= self.rise_db:
+            return {"db": round(peak, 1), "room_db": round(room, 1), "rise_db": round(rise, 1)}
+        return None
+
+
 class AudioInput:
     """
     Continuous Vosk speech-to-text stream.
@@ -555,8 +597,10 @@ class AudioInput:
         command_timeout_s: float = 6.0,
         device: Optional[int] = None,
         moving_fn: Optional[Callable[[], bool]] = None,
+        loudness: Optional[LoudnessWatch] = None,
     ):
         self._bus             = bus
+        self._loudness        = loudness or LoudnessWatch()
         self._wake_word       = wake_word.lower()
         self._vosk_model_path = Path(vosk_model_path).expanduser()
         self._samplerate      = samplerate
@@ -620,6 +664,20 @@ class AudioInput:
         if self._thread:
             self._thread.join(timeout=3.0)
         log.info("AudioInput stopped")
+
+    def _listen_for_bangs(self, raw: bytes) -> None:
+        """A sudden loud sound → UNUSUAL_SOUND; skills/startle_skill.py decides what to do."""
+        import numpy as np
+        bang = self._loudness.feed(np.frombuffer(raw, dtype=np.int16))
+        if bang is None:
+            return
+        now = time.time()
+        if now < self._own_until or now - self._moved_at < self._MOTION_TAIL_S:
+            log.debug(f"Loud sound, its own (voice or motors): {bang}")
+            return
+        log.info(f"Loud sound: {bang['db']} dBFS, {bang['db'] - bang['room_db']:.0f} dB over the room, "
+                 f"rising {bang['rise_db']} dB at once")
+        self._bus.publish(EventType.UNUSUAL_SOUND, bang, source="AudioInput")
 
     def register_command_handler(self, fn: Callable[[str], None]) -> None:
         """Optional direct callback in addition to bus event."""
@@ -690,6 +748,7 @@ class AudioInput:
                     stream_s += len(raw) / 32000.0
                     if self._moving_fn is not None and self._moving_fn():
                         self._moved_at = time.time()
+                    self._listen_for_bangs(raw)
                     if kws.AcceptWaveform(raw):
                         spotter.spotted(json.loads(kws.Result()).get("result", []))
                     if rec.AcceptWaveform(raw):

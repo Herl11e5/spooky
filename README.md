@@ -38,12 +38,26 @@ la precedenza. È la divisione `robotd`/client di microduck.
 - **Memoria** (`services/knowledge.py`): ciò che sente intorno (solo testo), vede e dice diventa
   osservazione; prima di ogni risposta richiama i ricordi più vicini per significato
   (embeddinggemma); ogni notte li distilla in fatti duraturi (gemma3) e cancella il testo grezzo.
+  Un fatto sentito una volta sola resta un'ipotesi («[maybe]») finché non lo risente.
 - **Voce**: risponde in inglese con la propria lingua droide (`services/droid_voice.py`);
-  capisce l'italiano (Vosk). Il nome si riconosce dal suono (`wake_match`): il modello italiano
-  non scrive mai «spooky».
+  capisce l'italiano (Vosk). Il nome lo cerca un secondo riconoscitore che conosce solo
+  «spooky» (`WakeSpotter`): il modello italiano da solo non lo scrive mai. Mentre il corpo si
+  muove serve più certezza, perché i motori si sentono.
+- **Pisolino** (`skills/nap_skill.py`): cinque minuti senza nessuno e si siede (servo spenti);
+  un volto noto o il suo nome lo svegliano. Il corpo si siede comunque da solo dopo 15 minuti.
+- **Sussulti** (`skills/startle_skill.py`): un rumore secco (un battito di mani, qualcosa che
+  cade — non una voce, che cresce invece di esplodere), qualcosa che gli arriva addosso in
+  fretta, la luce che si spegne o si accende: sobbalza (gesto `flinch`) ed esclama; se è solo,
+  si guarda intorno. Poi ci si abitua: la seconda volta solo un verso, la terza niente, finché
+  non passano due minuti tranquilli. Mai mentre parla o gli si parla; di notte resta immobile
+  e lascia l'evento agli allarmi.
+- **Salute**: `/api/state` dice di ogni parte se funziona (microfono, riconoscimento vocale,
+  voce, collegamento al corpo). Il modello linguistico è a parte: il Mac può dormire, e non è
+  mai colpa di una release.
 - **Sul Pi**: `spooky-brain.service` (`deploy/`), configurazione `config/picrawler-pi.yaml`;
   si installa con `python scripts/release.py spooky` dal repository del corpo, che verifica la
-  versione sul robot e torna alla precedente se non parte.
+  versione sul robot e torna alla precedente se non parte o se smette di funzionare una parte
+  che prima funzionava.
 
 Tutto si gestisce dalla dashboard del corpo (`http://<robot>:8000`, pannello «Cervello»).
 
