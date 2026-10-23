@@ -562,6 +562,14 @@ class WakeSpotter:
                 and before[-1]["word"] not in self._GREETINGS:
             log.info(f"Name in the middle of a sentence — ignored: {context}")
             return None
+        # Nothing heard where the name was, and nothing after it: a cough, a chair, a
+        # keyboard — the grammar recogniser has to put the name somewhere. A real call
+        # is heard as something ("sfoghi", "buchi", "seduto"…) or has a command after
+        # it. Measured 2026-10-23 16:25–17:41: 16 of about 20 false wakes were this,
+        # and 6 of the user's 7 calls had a word or a command.
+        if not heard_as and not command:
+            log.info(f"Name with nothing said around it — ignored: {context}")
+            return None
         log.info(f"Name taken: {context}")
         return " ".join(command)
 

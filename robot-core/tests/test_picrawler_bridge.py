@@ -875,8 +875,16 @@ def test_a_lone_name_wakes_it_with_no_command_yet():
     from services.audio import WakeSpotter
     spot = WakeSpotter()
     spot.spotted([_w("spooky", 0.0, 0.4)])
-    assert spot.poll(1.0) is None
+    assert spot.poll(0.2) is None                                   # free recognition not done yet
+    spot.heard([_w("buchi", 0.0, 0.45)])                            # "Spooky…" heard as itself
     assert spot.poll(3.0) == ""                                     # nothing followed: listen
+
+
+def test_a_name_where_nothing_was_said_is_not_a_call():
+    from services.audio import WakeSpotter
+    spot = WakeSpotter()
+    spot.spotted([_w("spooky", 10.0, 10.33)])                       # a cough, a chair, a keyboard
+    assert spot.poll(13.0) is None
 
 
 def test_an_unsure_spot_is_ignored():
@@ -893,9 +901,11 @@ def test_moving_it_needs_a_surer_name():
     spot.spotted([_w("spooky", 1.0, 1.4, conf=0.87)])               # servo noise, measured
     assert spot.poll(10.0) is None
     spot.spotted([_w("spooky", 20.0, 20.4, conf=1.0)])              # the user, measured
+    spot.heard([_w("sbuchi", 20.0, 20.4)])
     assert spot.poll(30.0) == ""
     moving[0] = False
     spot.spotted([_w("spooky", 40.0, 40.4, conf=0.92)])
+    spot.heard([_w("sporchi", 40.0, 40.4)])
     assert spot.poll(50.0) == ""
 
 
