@@ -761,10 +761,12 @@ class MindService:
         return reply
 
     def _build_context(self) -> str:
+        # Not the old memory's summary any more: its last episodes ("Salutato Padrone",
+        # "Esperimento … adopted") repeat the conversation, which the history already
+        # carries, and its key=value facts had gone stale ("user_role = sbuchi che") —
+        # ~250 of the prompt's ~1000 tokens, read again at every reply (2026-10-23). What
+        # it knows comes from the knowledge service's recall, chosen for the question.
         parts = []
-        mem = self._memory.summary(5)
-        if mem:
-            parts.append(mem)
         # Includi la scena recente se fresca (< 60s)
         if self._last_seen_scene and time.time() - self._last_scene_ts < 60:
             parts.append(f"Sto guardando: {self._last_seen_scene}")
