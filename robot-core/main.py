@@ -161,7 +161,8 @@ class RobotRuntime:
             moving_fn=self._body.is_moving if self._body else None)
 
         # ── Audio ─────────────────────────────────────────────────────────────────
-        self._audio = AudioService(self._bus, cfg)
+        self._audio = AudioService(self._bus, cfg,
+                                   moving_fn=self._body.is_moving if self._body else None)
 
         # ── Face database + Vision ────────────────────────────────────────────────
         face_db_path = ROOT / cfg.get("face.db_path", "data/faces/")

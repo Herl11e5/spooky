@@ -463,43 +463,33 @@ def wake_match(text: str, wake_word: str = "spooky") -> Optional[str]:
 class WakeSpotter:
     """
     The name, listened for on its own. Free recognition with the Italian model never
-    writes "spooky" — the word is in the model's vocabulary but improbable in Italian,
-    so it comes out as "sporchi", "a", "no road". A second recogniser on the same audio,
-    whose grammar allows only the name or [unk], is forced to choose: on the user's own
-    voice it found every "spooky" (confidence 1.0) and nothing in the rest of the speech.
+    writes "spooky": on the user's voice, five "Spooky" came out as "pochi", "sbuchi",
+    "buchi", "sfoci", "sporchi". The word is in the model's vocabulary, only improbable
+    in Italian, so a second recogniser on the same audio, whose grammar allows only the
+    name or [unk], is forced to choose. Measured on 90 s from the robot's microphone:
+    all five found with confidence 1.0, about a second after each, and nothing in a
+    minute of office noise. Its partial results never showed the name at all, so only
+    final results count, and only confident ones.
 
-    It is read from its partial results, which update every half second: its final
-    result can come ten seconds late, when it has a lot of other speech to file as
-    [unk]. Both recognisers time their words on the same stream, so the command is
-    what the free one heard from just after the name.
+    Both recognisers time their words on the same stream, so the command is what the
+    free one heard from just after the name.
     """
 
     _NAME_S = 0.3          # the command starts this long after the name begins
 
-    def __init__(self, wake_word: str = "spooky", min_conf: float = 0.85, wait_s: float = 2.5) -> None:
+    def __init__(self, wake_word: str = "spooky", min_conf: float = 0.9, wait_s: float = 2.5) -> None:
         self._word = wake_word.lower()
         self._min_conf = min_conf
         self._wait = wait_s
         self._name_start: Optional[float] = None   # a name heard, its command not yet taken
-        self._fired = False                         # this grammar segment already woke it
         self._utterances: List[list] = []          # recent free-recognition words
 
-    def partial(self, words: list) -> None:
-        """Words of a partial result from the grammar recogniser (SetPartialWords)."""
-        if not self._fired:
-            for w in words:
-                if w.get("word") == self._word:
-                    self._name_start, self._fired = float(w["start"]), True
-                    return
-
     def spotted(self, words: list) -> None:
-        """Words of a final result from the grammar recogniser: a late catch, then a new segment."""
-        if not self._fired:
-            for w in words:
-                if w.get("word") == self._word and w.get("conf", 0.0) >= self._min_conf:
-                    self._name_start = float(w["start"])
-                    break
-        self._fired = False
+        """Words of a final result from the grammar recogniser."""
+        for w in words:
+            if w.get("word") == self._word and w.get("conf", 0.0) >= self._min_conf:
+                self._name_start = float(w["start"])
+                return
 
     def heard(self, words: list) -> None:
         """Words of a final result from the free recogniser."""
@@ -550,6 +540,7 @@ class AudioInput:
         blocksize: int = 8000,
         command_timeout_s: float = 6.0,
         device: Optional[int] = None,
+        moving_fn: Optional[Callable[[], bool]] = None,
     ):
         self._bus             = bus
         self._wake_word       = wake_word.lower()
@@ -571,6 +562,12 @@ class AudioInput:
         # Its own voice comes back through the mic: while it speaks, and a moment
         # after, what is heard is marked as its own and never wakes it or commands it.
         self._own_until = 0.0
+        # Its own motors too: the servos' whine woke it nine times in four minutes of
+        # autonomy (microduck gates on self-motion). And after waking, its own blip
+        # must not wake it again.
+        self._moving_fn = moving_fn
+        self._moved_at = -1e9
+        self._refractory_until = 0.0
         bus.subscribe(EventType.TTS_STARTED, lambda ev: setattr(self, "_own_until", float("inf")))
         bus.subscribe(EventType.TTS_FINISHED, lambda ev: setattr(self, "_own_until", time.time() + self._OWN_TAIL_S))
 
@@ -639,7 +636,6 @@ class AudioInput:
         # The name, spotted by a recogniser that may only hear it or [unk] (WakeSpotter).
         kws = vosk.KaldiRecognizer(model, 16000, json.dumps([self._wake_word, "[unk]"]))
         kws.SetWords(True)
-        kws.SetPartialWords(True)
         spotter = WakeSpotter(self._wake_word)
         stream_s = 0.0
 
@@ -668,10 +664,10 @@ class AudioInput:
                     if hw_rate != 16000:
                         raw = self._resample_numpy(raw, hw_rate, 16000)
                     stream_s += len(raw) / 32000.0
+                    if self._moving_fn is not None and self._moving_fn():
+                        self._moved_at = time.time()
                     if kws.AcceptWaveform(raw):
                         spotter.spotted(json.loads(kws.Result()).get("result", []))
-                    else:
-                        spotter.partial(json.loads(kws.PartialResult()).get("partial_result", []))
                     if rec.AcceptWaveform(raw):
                         result = json.loads(rec.Result())
                         spotter.heard(result.get("result", []))
@@ -751,10 +747,16 @@ class AudioInput:
             if time.time() - self._last_speech_ts >= self._command_timeout:
                 self._emit_command()
 
+    _MOTION_TAIL_S = 1.5  # the name's result arrives about a second after it was said
+    _REFRACTORY_S = 3.0
+
     def _wake(self, remainder: str, heard: str) -> None:
         """The name was heard: listen for a command, starting with what followed it."""
-        if self._state != self._STATE_IDLE or time.time() < self._own_until:
+        now = time.time()
+        if (self._state != self._STATE_IDLE or now < self._own_until or now < self._refractory_until
+                or now - self._moved_at < self._MOTION_TAIL_S):
             return
+        self._refractory_until = now + self._REFRACTORY_S
         log.info(f"Wake word detected: '{heard}'")
         self._bus.publish(EventType.WAKE_WORD_DETECTED, {"transcript": heard}, source="AudioInput")
         self._bus.publish(EventType.MIC_STATE_CHANGED, {"state": "listening"}, source="AudioInput")
@@ -801,7 +803,7 @@ class AudioService:
         audio.say("Ciao mondo")
     """
 
-    def __init__(self, bus: EventBus, cfg):
+    def __init__(self, bus: EventBus, cfg, moving_fn: Optional[Callable[[], bool]] = None):
         robot_cfg = cfg.get("robot", {})
         audio_cfg = cfg.get("audio", {})
 
@@ -827,6 +829,7 @@ class AudioService:
             blocksize=blocksize,
             command_timeout_s=cmd_timeout,
             device=device,
+            moving_fn=moving_fn,
         )
 
     def start(self) -> None:

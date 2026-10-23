@@ -811,40 +811,47 @@ def _w(word, start, end, conf=1.0):
     return {"word": word, "start": start, "end": end, "conf": conf}
 
 
-def test_the_name_in_a_partial_takes_the_words_after_it_as_the_command():
+def test_the_spotted_name_takes_the_words_after_it_as_the_command():
     from services.audio import WakeSpotter
     spot = WakeSpotter()
-    spot.partial([_w("spooky", 12.9, 13.3)])
+    spot.spotted([_w("spooky", 12.9, 13.3)])
     assert spot.poll(13.4) is None                                  # free recognition not done yet
     spot.heard([_w("che", 12.6, 12.8), _w("sporchi", 12.9, 13.3), _w("come", 13.4, 13.6), _w("stai", 13.6, 13.9)])
     assert spot.poll(14.0) == "come stai"
     assert spot.poll(14.5) is None                                  # once only
-    spot.partial([_w("spooky", 12.9, 13.3)])                        # the same segment again: no
-    assert spot.poll(20.0) is None
-
-
-def test_a_late_final_still_wakes_it_with_the_right_command():
-    from services.audio import WakeSpotter
-    spot = WakeSpotter()
-    spot.heard([_w("piacere", 0.9, 1.2), _w("un", 1.2, 1.3), _w("grande", 1.4, 1.8)])
-    spot.heard([_w("bianco", 4.3, 4.7)])
-    spot.spotted([_w("spooky", 0.0, 10.5)])                        # final after ten seconds, end smeared
-    assert spot.poll(11.0) == "piacere un grande"
 
 
 def test_a_lone_name_wakes_it_with_no_command_yet():
     from services.audio import WakeSpotter
     spot = WakeSpotter()
-    spot.partial([_w("spooky", 0.0, 0.4)])
+    spot.spotted([_w("spooky", 0.0, 0.4)])
     assert spot.poll(1.0) is None
     assert spot.poll(3.0) == ""                                     # nothing followed: listen
 
 
-def test_an_unsure_late_spot_is_ignored():
+def test_an_unsure_spot_is_ignored():
     from services.audio import WakeSpotter
     spot = WakeSpotter()
-    spot.spotted([_w("spooky", 5.0, 5.3, conf=0.6), _w("[unk]", 5.3, 6.0)])
+    spot.spotted([_w("spooky", 5.0, 5.3, conf=0.7), _w("[unk]", 5.3, 6.0)])
     assert spot.poll(10.0) is None
+
+
+def test_its_motors_and_its_own_blip_do_not_wake_it():
+    from services.audio import AudioInput
+    from core.bus import EventType
+    bus, moving = Bus(), [True]
+    woke = []
+    bus.subscribe(EventType.WAKE_WORD_DETECTED, lambda ev: woke.append(ev))
+    mic = AudioInput(bus, moving_fn=lambda: moving[0])
+    mic._moved_at = time.time()                                     # the body is walking
+    mic._wake("", "(spotted) ")
+    assert woke == []
+    mic._moved_at = time.time() - 5.0                               # still for a while
+    mic._wake("", "(spotted) ")
+    assert len(woke) == 1
+    mic._state = mic._STATE_IDLE                                    # the command came and went
+    mic._wake("", "(spotted) ")                                     # its own blip, a moment later
+    assert len(woke) == 1
 
 
 def test_a_command_ends_after_silence_without_more_speech():
