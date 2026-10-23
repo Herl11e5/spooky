@@ -24,7 +24,7 @@ import random
 import re
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from core.bus import EventBus, EventType
 from core.modes import Mode, ModeManager
@@ -62,6 +62,37 @@ def plain(text: str) -> str:
     text = _EMOJI.sub("", text)
     text = re.sub(r"[*_`#~]", "", text)
     return re.sub(r"\s{2,}", " ", text).strip()
+
+_BOUNDARY = re.compile(r'[.!?…]+["»”)\']*\s+')
+
+
+class SentenceSplitter:
+    """
+    Whole sentences out of a reply as it streams in, each as soon as it is complete,
+    so the voice can start on the first while the model writes the rest (measured
+    2026-10-23: first sentence at 1.35 s, whole reply at 2.1 s). A sentence shorter
+    than `min_words` ("Oh!") waits for the next one rather than standing alone.
+    """
+
+    def __init__(self, min_words: int = 4) -> None:
+        self._buf = ""
+        self._min = min_words
+
+    def feed(self, text: str) -> list:
+        self._buf += text
+        out, start = [], 0
+        for m in _BOUNDARY.finditer(self._buf):
+            piece = self._buf[start:m.end()]
+            if len(piece.split()) >= self._min:
+                out.append(piece.strip())
+                start = m.end()
+        self._buf = self._buf[start:]
+        return out
+
+    def flush(self) -> list:
+        rest, self._buf = self._buf.strip(), ""
+        return [rest] if rest else []
+
 
 _SYSTEM_PROMPT = """You are Spooky, a small robot spider who lives on a desk.
 You are curious, lively and a little gothic — a mechanical spider who watches the world with eyes that never close.
@@ -184,10 +215,26 @@ class OllamaBrain:
 
     # ── inference ─────────────────────────────────────────────────────────────
 
-    def think(self, user_message: str, context: str = "") -> str:
+    def think(self, user_message: str, context: str = "",
+              on_sentence: Optional[Callable[[str], None]] = None) -> str:
         """
         Generate a response. Non-blocking: if ollama is busy, returns fallback.
+        With `on_sentence`, the reply streams and each sentence is handed over as
+        soon as it is complete — every part of what is returned, fallbacks too.
         """
+        said: list = []                        # per call: thoughts and commands can overlap
+
+        def hand_over(piece: str) -> None:
+            said.append(piece)
+            on_sentence(piece)
+
+        reply = self._think(user_message, context, hand_over if on_sentence else None)
+        if on_sentence is not None and not said:
+            on_sentence(reply)                 # a fallback, or nothing streamed: say it whole
+        return reply
+
+    def _think(self, user_message: str, context: str,
+               on_sentence: Optional[Callable[[str], None]]) -> str:
         with self._lock:
             self._history.append({"role": "user", "content": user_message})
             # Trim history
@@ -230,17 +277,17 @@ class OllamaBrain:
                     [{"role": "system", "content": system}]
                     + list(self._history)
                 )
-            resp = llm_host.client().chat(
-                model=self._model,
-                messages=messages,
-                options={
-                    "temperature":    self._temp,
-                    "num_predict":    self._max_tok,
-                    "repeat_penalty": self._repeat_pen,
-                },
-                keep_alive=self._keep_alive,
-            )
-            reply = plain(self._extract(resp)) or random.choice(_FALLBACK_IT)
+            options = {
+                "temperature":    self._temp,
+                "num_predict":    self._max_tok,
+                "repeat_penalty": self._repeat_pen,
+            }
+            if on_sentence is None:
+                resp = llm_host.client().chat(model=self._model, messages=messages, options=options,
+                                              keep_alive=self._keep_alive)
+                reply = plain(self._extract(resp)) or random.choice(_FALLBACK_IT)
+            else:
+                reply = self._stream(messages, options, on_sentence) or random.choice(_FALLBACK_IT)
         except Exception as e:
             log.warning(f"OllamaBrain: {e}")
             reply = random.choice(_FALLBACK_IT)
@@ -254,6 +301,35 @@ class OllamaBrain:
     def clear_history(self) -> None:
         with self._lock:
             self._history.clear()
+
+    def _stream(self, messages: list, options: dict, on_sentence: Callable[[str], None]) -> str:
+        """The reply, sentence by sentence to `on_sentence` as it is written."""
+        from services import llm_host
+        split, said = SentenceSplitter(), []
+
+        def hand_over(pieces):
+            for piece in pieces:
+                piece = plain(piece)
+                if piece:
+                    said.append(piece)
+                    on_sentence(piece)
+        try:
+            for chunk in llm_host.client().chat(model=self._model, messages=messages, options=options,
+                                                keep_alive=self._keep_alive, stream=True):
+                hand_over(split.feed(self._extract_raw(chunk)))
+        except Exception as e:
+            if not said:
+                raise                              # nothing said yet: the caller falls back
+            log.warning(f"OllamaBrain: stream cut short ({e}); keeping what was said")
+        hand_over(split.flush())
+        return " ".join(said)
+
+    @staticmethod
+    def _extract_raw(chunk) -> str:
+        try:
+            return chunk.message.content or ""
+        except AttributeError:
+            return (chunk.get("message") or {}).get("content", "")
 
     @staticmethod
     def _extract(resp) -> str:
@@ -398,11 +474,10 @@ class MindService:
             if not facts:
                 self._audio.say("I haven't learnt much yet. Give me a night's sleep.")
                 return
-            reply = self._think(
+            self._think(
                 "Someone asks what you remember. Tell them two or three of these, in your own words.",
                 context="Things you have learnt:\n" + "\n".join(f"- {f['text']}" for f in facts),
-                trigger="memory")
-            self._audio.say(reply)
+                trigger="memory", speak=True)
             return
 
         # "scansiona" — environment scan
@@ -449,8 +524,7 @@ class MindService:
                 self._brain._history = self._brain._history[-4:]
 
         context = self._build_context()
-        reply   = self._think(cmd, context=context, trigger="comando")
-        self._audio.say(reply)
+        reply   = self._think(cmd, context=context, trigger="comando", speak=True)
         self._memory.add_episode(
             what=f"Comando: '{cmd}' → '{reply}'",
             action="respond",
@@ -635,8 +709,12 @@ class MindService:
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
-    def _think(self, prompt: str, context: str = "", trigger: str = "") -> str:
-        """Wrapper around brain.think() that publishes LLM_CALL event for dashboard visibility."""
+    def _think(self, prompt: str, context: str = "", trigger: str = "", speak: bool = False) -> str:
+        """
+        Wrapper around brain.think() that publishes LLM_CALL event for dashboard visibility.
+        speak: say the reply as it is written, sentence by sentence — the voice starts on
+        the first while the model is still on the rest.
+        """
         t0 = time.time()
         if self._knowledge is not None:
             memories = self._knowledge.recall(prompt)
@@ -650,8 +728,18 @@ class MindService:
             who = face.get("name") or "The person in front of you"
             context = ((context + "\n\n") if context else "") + (
                 f"{who} looks {face['expression']} right now: let that shape how you answer.")
-        reply = self._brain.think(prompt, context=context)
+        t_model = time.time()
+        spoken: list = []                              # (time, sentence) as each goes to the voice
+
+        def say(sentence: str) -> None:
+            self._audio.say(sentence, continues=bool(spoken))   # one chat message, however many sentences
+            spoken.append((time.time(), sentence))
+
+        reply = self._brain.think(prompt, context=context, on_sentence=say if speak else None)
         ms = int((time.time() - t0) * 1000)
+        log.info(f"Think ({trigger or 'other'}): recall {int((t_model - t0) * 1000)} ms, model "
+                 f"{int((time.time() - t_model) * 1000)} ms"
+                 + (f", voice from {int((spoken[0][0] - t0) * 1000)} ms in {len(spoken)} part(s)" if spoken else ""))
         fallback = reply in _FALLBACK_IT
         self._bus.publish(EventType.LLM_CALL, {
             "trigger":  trigger,

@@ -54,6 +54,16 @@ class SharedState:
         with self._lock:
             self._data.update(kwargs)
 
+    def extend_chat(self, role: str, text: str):
+        """The next sentence of the same reply: added to the last message, not a new one."""
+        with self._lock:
+            chat = self._data["chat_history"]
+            if chat and chat[-1]["role"] == role:
+                chat[-1]["text"] += " " + text
+                chat[-1]["ts"] = time.time()
+                return
+        self.add_chat(role, text)
+
     def add_chat(self, role: str, text: str):
         with self._lock:
             self._data["chat_history"].append({"role": role, "text": text, "ts": time.time()})
@@ -508,7 +518,7 @@ class DashboardService:
     def _on_tts_start(self, ev):
         shared.update(tts_speaking=True)
         text = ev.get("text", "")
-        shared.add_chat("spooky", text)
+        (shared.extend_chat if ev.get("continues") else shared.add_chat)("spooky", text)
         self._broadcast({"type": "tts_start", "text": text})
 
     def _on_tts_finish(self, ev):

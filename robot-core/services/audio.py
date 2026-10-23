@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import queue
 import re
 import struct
 import subprocess
@@ -82,6 +83,10 @@ class AudioOutput:
         self._piper_speaker = piper_speaker   # multi-speaker voices (VCTK: p232, …)
         self._lang       = language
         self._lock       = threading.Lock()
+        # One speaker, in order: a reply now arrives a sentence at a time, and a thread
+        # per sentence waiting on a lock could say the second before the first.
+        self._queue: "queue.Queue" = queue.Queue()
+        threading.Thread(target=self._speaker, daemon=True, name="TTS").start()
         self._aplay_dev  = self._detect_aplay_device()   # best non-HDMI card
         self._method     = self._detect(method)
         self._engine     = None   # pyttsx3 instance if used
@@ -202,35 +207,39 @@ class AudioOutput:
         except Exception:
             return False
 
-    def say(self, text: str, wait: bool = True, feeling: Optional[str] = None) -> None:
+    def say(self, text: str, wait: bool = True, feeling: Optional[str] = None,
+            continues: bool = False) -> None:
         """
-        Speak `text`. Non-blocking by default (launches a daemon thread).
-        Set wait=True to block until speech finishes. `feeling` sets the droid
-        voice's tone (happy, sad, question, alert, sleepy); otherwise it is read
-        from the words.
+        Speak `text`, after whatever is already queued. Set wait=True to block until
+        it has been said. `feeling` sets the droid voice's tone (happy, sad, question,
+        alert, sleepy); otherwise it is read from the words. `continues`: the next
+        sentence of the same reply (the chat shows it as one message).
         """
         if not text:
             return
-        clean = self._sanitise(text)
+        done = threading.Event()
+        self._queue.put((self._sanitise(text), feeling, continues, done))
+        if wait:
+            done.wait()
 
-        def _do():
+    def _speaker(self) -> None:
+        while True:
+            clean, feeling, continues, done = self._queue.get()
             fd, wav = tempfile.mkstemp(suffix=".wav", prefix="spooky_tts_")
             os.close(fd)
             with self._lock:
-                self._bus.publish(EventType.TTS_STARTED, {"text": clean}, source="AudioOutput")
+                self._bus.publish(EventType.TTS_STARTED, {"text": clean, "continues": continues}, source="AudioOutput")
                 try:
                     self._speak(clean, wav, feeling)
+                except Exception as e:
+                    log.error(f"TTS: {e}")
                 finally:
                     try:
                         os.unlink(wav)
                     except OSError:
                         pass
                     self._bus.publish(EventType.TTS_FINISHED, {}, source="AudioOutput")
-
-        t = threading.Thread(target=_do, daemon=True, name="TTS")
-        t.start()
-        if wait:
-            t.join()
+                    done.set()
 
     # ── backend dispatch ──────────────────────────────────────────────────────
 
@@ -987,8 +996,8 @@ class AudioService:
         self._inp.stop()
         log.info("AudioService stopped")
 
-    def say(self, text: str, wait: bool = False, feeling: Optional[str] = None) -> None:
-        self._out.say(text, wait=wait, feeling=feeling)
+    def say(self, text: str, wait: bool = False, feeling: Optional[str] = None, continues: bool = False) -> None:
+        self._out.say(text, wait=wait, feeling=feeling, continues=continues)
 
     _MIC_FRESH_S = 3.0      # audio arrives every half second while the stream runs
 
