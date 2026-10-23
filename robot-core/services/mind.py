@@ -349,6 +349,17 @@ class MindService:
             self._audio.say("Okay, I'll keep quiet.")
             return
 
+        # Volume: "parla più piano", "abbassa", "più forte", "alza il volume", "volume 40"
+        m_vol = re.search(r"volume\s+(?:a\s+|al\s+)?(\d{1,3})", cmd_lo)
+        louder = any(w in cmd_lo for w in ("più forte", "alza il volume", "alza la voce", "non ti sento"))
+        softer = any(w in cmd_lo for w in ("più piano", "abbassa", "più basso", "meno forte"))
+        if m_vol or louder or softer:
+            now = self._audio.volume
+            target = int(m_vol.group(1)) if m_vol else now + (20 if louder else -20)
+            level = self._audio.set_volume(target)
+            self._audio.say("Like this?" if level else "")
+            return
+
         if any(w in cmd_lo for w in ("cosa ricordi", "memoria", "ricordi")):
             facts = self._knowledge.facts(8) if self._knowledge else []
             if not facts:
@@ -589,6 +600,11 @@ class MindService:
                 context = ((context + "\n\n") if context else "") + (
                     "What you remember that may matter here (use it naturally, never list it):\n"
                     + "\n".join(f"- {m}" for m in memories))
+        face = self._vision.expression_now() if self._vision is not None and hasattr(self._vision, "expression_now") else None
+        if face and face.get("expression") not in (None, "neutral"):
+            who = face.get("name") or "The person in front of you"
+            context = ((context + "\n\n") if context else "") + (
+                f"{who} looks {face['expression']} right now: let that shape how you answer.")
         reply = self._brain.think(prompt, context=context)
         ms = int((time.time() - t0) * 1000)
         fallback = reply in _FALLBACK_IT

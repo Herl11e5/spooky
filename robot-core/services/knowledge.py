@@ -158,7 +158,8 @@ class KnowledgeService:
                                (EventType.SCENE_ANALYZED, self._on_seen),
                                (EventType.OBJECTS_DETECTED, self._on_objects),
                                (EventType.PERSON_IDENTIFIED, self._on_met),
-                               (EventType.PERSON_UNKNOWN, self._on_stranger)):
+                               (EventType.PERSON_UNKNOWN, self._on_stranger),
+                               (EventType.EXPRESSION_CHANGED, self._on_expression)):
             bus.subscribe(event, handler)
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
@@ -220,6 +221,11 @@ class KnowledgeService:
         if now - self._met.get(name, 0) > 600:          # one entry per visit, not per frame
             self._met[name] = now
             self.observe("met", f"{name} was here", who=name)
+
+    def _on_expression(self, ev) -> None:
+        expression = ev.get("expression")
+        if expression and expression != "neutral":
+            self.observe("seen", f"{ev.get('name') or 'Someone'} looked {expression}", who=ev.get("name") or "")
 
     def _on_stranger(self, ev) -> None:
         now = self._clock()

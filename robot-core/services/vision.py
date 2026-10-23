@@ -547,6 +547,9 @@ class VisionService:
         # Detector + recognizer: the body's faces and embeddings, or a local cascade + LBPH
         self._faces_fn = faces_fn
         self._track_ids: Dict[int, Tuple[Optional[str], float]] = {}   # body track → best identity
+        # Expression of the face in front: a candidate becomes current once it has lasted.
+        self._expr_candidate: Tuple[Optional[str], float] = (None, 0.0)
+        self._expr_current: Dict[str, object] = {}
         self._frame_at = 0.0
         if faces_fn is not None:
             self._detector   = None
@@ -783,8 +786,13 @@ class VisionService:
             "bearing_deg": face.get("bearing_deg"),
             "distance_m":  face.get("distance_m"),
         }
+        expression = face.get("expression") if (face.get("expression_age_s") or 99) < 2.0 else None
+        base_payload["expression"] = expression
         self._bus.publish(EventType.PERSON_DETECTED, {**base_payload, "person_id": person_id},
                           source="VisionService")
+        name = (self._db.display_name(person_id) or person_id) if person_id and conf >= self._conf_high else None
+        self._track_expression(face["id"], person_id if name else None, name,
+                               expression, face.get("expression_confidence") or 0.0)
         if conf >= self._conf_high and person_id:
             self._bus.publish(EventType.PERSON_IDENTIFIED,
                               {**base_payload, "person_id": person_id,
@@ -792,6 +800,40 @@ class VisionService:
                               source="VisionService")
         else:
             self._bus.publish(EventType.PERSON_UNKNOWN, base_payload, source="VisionService")
+
+    _EXPR_HOLD_S = 1.2       # an expression must last this long to count
+    _EXPR_MIN_CONF = 0.5
+
+    def _track_expression(self, track_id: int, person_id: Optional[str], name: Optional[str],
+                          expression: Optional[str], confidence: float) -> None:
+        """Publish EXPRESSION_CHANGED when the face in front settles on a new expression."""
+        now = time.monotonic()
+        if self._expr_current.get("track_id") != track_id:
+            self._expr_current = {"track_id": track_id, "expression": None}
+            self._expr_candidate = (None, now)
+        if expression is None or confidence < self._EXPR_MIN_CONF:
+            return
+        if expression != self._expr_candidate[0]:
+            self._expr_candidate = (expression, now)
+            return
+        held = now - self._expr_candidate[1]
+        if held >= self._EXPR_HOLD_S and expression != self._expr_current.get("expression"):
+            previous = self._expr_current.get("expression")
+            self._expr_current = {"track_id": track_id, "expression": expression, "confidence": confidence,
+                                  "person_id": person_id, "name": name, "since": now}
+            self._bus.publish(EventType.EXPRESSION_CHANGED,
+                              {"track_id": track_id, "person_id": person_id, "name": name,
+                               "expression": expression, "confidence": round(confidence, 2),
+                               "previous": previous}, source="VisionService")
+        if expression == self._expr_current.get("expression"):
+            self._expr_current["seen"] = now
+
+    def expression_now(self) -> Optional[dict]:
+        """How the person in front looks, if seen in the last few seconds."""
+        cur = self._expr_current
+        if cur.get("expression") and time.monotonic() - float(cur.get("seen", cur.get("since", 0))) < 5:
+            return dict(cur)
+        return None
 
     def track_identities(self) -> Dict[int, dict]:
         """Who each of the body's face tracks is, as far as spooky knows (for the dashboard)."""

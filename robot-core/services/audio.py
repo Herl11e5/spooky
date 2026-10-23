@@ -21,6 +21,7 @@ Privacy rules:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -85,9 +86,58 @@ class AudioOutput:
         self._method     = self._detect(method)
         self._engine     = None   # pyttsx3 instance if used
         self._piper      = None   # loaded once: ~1-2 s per load on the Pi
+        self._volume_file = Path(__file__).resolve().parent.parent / "data" / "audio.json"
+        self._volume     = self._load_volume()
         if speaker_pin is not None:
             self._enable_speaker(int(speaker_pin))
         log.info(f"AudioOutput: method={self._method}, aplay_dev={self._aplay_dev}")
+
+    # ── volume ────────────────────────────────────────────────────────────────
+    # The Robot HAT's DAC has no volume control, so it is done here: the samples are
+    # scaled before playing, on a square curve so that 50 sounds like half. At 0
+    # nothing is played, but the words still reach the chat.
+
+    @property
+    def volume(self) -> int:
+        return self._volume
+
+    def set_volume(self, volume: float) -> int:
+        self._volume = int(max(0, min(100, round(volume))))
+        try:
+            self._volume_file.parent.mkdir(parents=True, exist_ok=True)
+            self._volume_file.write_text(json.dumps({"volume": self._volume}))
+        except OSError as e:
+            log.warning(f"AudioOutput: volume not saved: {e}")
+        log.info(f"AudioOutput: volume {self._volume}")
+        return self._volume
+
+    def _load_volume(self) -> int:
+        try:
+            return int(json.loads(self._volume_file.read_text())["volume"])
+        except (OSError, ValueError, KeyError):
+            return 70
+
+    def _apply_volume(self, wav_path: str) -> bool:
+        """Scale the file in place; False when muted (nothing to play)."""
+        if self._volume <= 0:
+            return False
+        if self._volume >= 100:
+            return True
+        import wave as _wave
+        import numpy as np
+        try:
+            with _wave.open(wav_path, "rb") as r:
+                params, frames = r.getparams(), r.readframes(r.getnframes())
+            if params.sampwidth != 2:
+                return True
+            gain = (self._volume / 100.0) ** 2
+            pcm = (np.frombuffer(frames, np.int16).astype(np.float32) * gain).astype(np.int16)
+            with _wave.open(wav_path, "wb") as w:
+                w.setparams(params)
+                w.writeframes(pcm.tobytes())
+        except Exception as e:
+            log.debug(f"AudioOutput: volume not applied: {e}")
+        return True
 
     def _enable_speaker(self, pin: int) -> None:
         """
@@ -148,10 +198,12 @@ class AudioOutput:
         except Exception:
             return False
 
-    def say(self, text: str, wait: bool = True) -> None:
+    def say(self, text: str, wait: bool = True, feeling: Optional[str] = None) -> None:
         """
         Speak `text`. Non-blocking by default (launches a daemon thread).
-        Set wait=True to block until speech finishes.
+        Set wait=True to block until speech finishes. `feeling` sets the droid
+        voice's tone (happy, sad, question, alert, sleepy); otherwise it is read
+        from the words.
         """
         if not text:
             return
@@ -163,7 +215,7 @@ class AudioOutput:
             with self._lock:
                 self._bus.publish(EventType.TTS_STARTED, {"text": clean}, source="AudioOutput")
                 try:
-                    self._speak(clean, wav)
+                    self._speak(clean, wav, feeling)
                 finally:
                     try:
                         os.unlink(wav)
@@ -178,11 +230,11 @@ class AudioOutput:
 
     # ── backend dispatch ──────────────────────────────────────────────────────
 
-    def _speak(self, text: str, wav_path: str) -> None:
+    def _speak(self, text: str, wav_path: str, feeling: Optional[str] = None) -> None:
         if self._method == self.M_PIPER:
             self._piper_speak(text, wav_path)
         elif self._method == self.M_DROID:
-            self._droid_speak(text, wav_path)
+            self._droid_speak(text, wav_path, feeling)
         elif self._method == self.M_ESPEAK_APLAY:
             self._espeak_aplay(text, wav_path)
         elif self._method == self.M_ESPEAK_PAPLAY:
@@ -221,7 +273,7 @@ class AudioOutput:
             log.warning(f"piper: {e} — using espeak-ng")
             self._espeak_aplay(text, wav_path)
 
-    def _droid_speak(self, text: str, wav_path: str) -> None:
+    def _droid_speak(self, text: str, wav_path: str, feeling: Optional[str] = None) -> None:
         """Spooky's own language: the words become whistles and clicks; the text stays in the chat."""
         import wave as _wave
         from services.droid_voice import RATE, render
@@ -229,11 +281,13 @@ class AudioOutput:
             wf.setnchannels(1)
             wf.setsampwidth(2)
             wf.setframerate(RATE)
-            wf.writeframes(render(text).tobytes())
+            wf.writeframes(render(text, feeling).tobytes())
         self._play_wav(wav_path)
 
     def _play_wav(self, wav_path: str) -> None:
         """Play a WAV file via the best available ALSA device."""
+        if not self._apply_volume(wav_path):
+            return
         dev_list: list = []
         if self._aplay_dev:
             dev_list.append(["-D", self._aplay_dev])
@@ -333,6 +387,49 @@ class AudioOutput:
         text = re.sub(r"\x1b\[[0-9;]*m", "", text)
         text = re.sub(r"[*_`#]", "", text)
         return text[:400]   # cap length
+
+
+# ── Wake word ─────────────────────────────────────────────────────────────────
+#
+# "Spooky" is an English word and the Italian Vosk model has no such word: tested
+# with three voices it wrote "sporchi", "spot", "spot chi", "spock chi", "sfoghi" —
+# never "spooky". So the name is matched by its sound: the first words of what was
+# heard, reduced to a consonant skeleton (Italian spelling: ch/gh/c+aou → K,
+# f/v/b → P, d → T, l → R), must start with S-P and reach a K or a T within the
+# next two consonants. The price: a sentence that *starts* with "sporco" or "spot"
+# wakes it too.
+
+_FILLERS = {"e", "ehi", "hey", "ei", "eh", "oh", "o", "ciao", "ok", "dai"}
+_KEY = [(r"ch|gh|ck|c(?=[aou])|q|g(?=[aou])|k|g$", "K"), (r"[fvbp]", "P"), (r"[td]", "T"),
+        (r"[rl]", "R"), (r"[mn]", "N"), (r"[sz]", "S"), (r"[cg]", "K")]
+
+
+def _skeleton(word: str) -> str:
+    w = word.lower()
+    for pattern, sub in _KEY:
+        w = re.sub(pattern, sub, w)
+    w = re.sub(r"[^KPTRNS]", "", w)
+    return re.sub(r"(.)\1+", r"\1", w)         # double consonants count once
+
+
+def wake_match(text: str, wake_word: str = "spooky") -> Optional[str]:
+    """What follows the name if `text` starts by calling spooky, else None."""
+    words = text.lower().split()
+    if wake_word.lower() in words:
+        return " ".join(words[words.index(wake_word.lower()) + 1:])
+    while words and words[0] in _FILLERS:
+        words = words[1:]
+    if words and words[0].startswith("e") and _skeleton(words[0][1:]).startswith("SP"):
+        words[0] = words[0][1:]                  # "espo chi": the "e" of "ehi" swallowed
+    if not words:
+        return None
+    # Vosk often splits the name: "spot chi", "spock chi" — the second half is a lone K.
+    n = 2 if len(words) > 1 and _skeleton(words[1]) == "K" else 1
+    key = _skeleton("".join(words[:n]))
+    if key.startswith("SP") and any(c in key[2:4] for c in "KT") and len(words) > n - 1:
+        if n == 2 or len(words) > 1:             # a lone "spot" is not a call
+            return " ".join(words[n:])
+    return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -519,7 +616,8 @@ class AudioInput:
         )
 
         if self._state == self._STATE_IDLE:
-            if self._wake_word in text.lower():
+            remainder = wake_match(text, self._wake_word)
+            if remainder is not None:
                 log.info(f"Wake word detected: '{text}'")
                 self._bus.publish(
                     EventType.WAKE_WORD_DETECTED,
@@ -531,10 +629,7 @@ class AudioInput:
                     {"state": "listening"},
                     source="AudioInput",
                 )
-                # Strip wake word and keep remainder as start of command
-                remainder = re.sub(
-                    re.escape(self._wake_word), "", text, flags=re.IGNORECASE
-                ).strip()
+                # What followed the name is the start of the command
                 self._state = self._STATE_ACTIVE
                 self._command_parts = [remainder] if remainder else []
                 self._last_speech_ts = time.time()
@@ -624,8 +719,15 @@ class AudioService:
         self._inp.stop()
         log.info("AudioService stopped")
 
-    def say(self, text: str, wait: bool = False) -> None:
-        self._out.say(text, wait=wait)
+    def say(self, text: str, wait: bool = False, feeling: Optional[str] = None) -> None:
+        self._out.say(text, wait=wait, feeling=feeling)
+
+    @property
+    def volume(self) -> int:
+        return self._out.volume
+
+    def set_volume(self, volume: float) -> int:
+        return self._out.set_volume(volume)
 
     @property
     def output(self) -> AudioOutput:

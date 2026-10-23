@@ -11,6 +11,7 @@ POST /api/command → inject command {"command": "..."}
 POST /api/enroll  → learn the face in view {"name": "..."}; GET → progress
 DELETE /api/persons/<id> → forget a person (face data and memory)
 GET  /api/faces   → body face track id → who spooky thinks it is
+GET/POST /api/volume {"volume": 0..100} → how loud it speaks (0 = silent, words still in the chat)
 GET  /api/knowledge → what it has learnt + stats; POST /api/knowledge/consolidate (sleep now),
      POST /api/knowledge/ambient {"on"}, DELETE /api/knowledge/<id> (forget a fact)
 POST /api/mode    → switch mode    {"mode": "..."}
@@ -276,6 +277,15 @@ class DashboardService:
         @app.route("/api/enroll", methods=["GET"])
         def api_enroll_status():
             return jsonify(self._mind.enrollment if self._mind is not None else {})
+
+        @app.route("/api/volume", methods=["GET", "POST"])
+        def api_volume():
+            if self._audio is None:
+                return jsonify({"error": "no audio"}), 404
+            if request.method == "POST":
+                body = request.get_json(silent=True) or {}
+                self._audio.set_volume(float(body.get("volume", self._audio.volume)))
+            return jsonify({"ok": True, "volume": self._audio.volume})
 
         @app.route("/api/knowledge")
         def api_knowledge():

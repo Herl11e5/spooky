@@ -548,3 +548,189 @@ def test_faces_are_learnt_as_they_are_seen(tmp_path):
         rec.reinforce("p1", near(me, 10 + i, 0.8), now=300.0 + 31 * i)
     assert len(rec._samples["p1"]) == EmbeddingRecognizer._MAX_LOOKS
     assert rec.predict(near(me, 999, 0.8))[0] == "p1"
+
+
+@pytest.mark.parametrize("heard, rest", [
+    # What Vosk's Italian model actually wrote for "Spooky, …" (three voices, on the Pi)
+    ("sporchi come stai", "come stai"), ("sporchi cosa vedi", "cosa vedi"),
+    ("e spot mi chiamo luca", "mi chiamo luca"), ("spot parla più piano", "parla più piano"),
+    ("sfoghi cosa vedi", "cosa vedi"), ("sport chi parla più piano", "parla più piano"),
+    ("spot chi come stai", "come stai"), ("espo chi mi chiamo luca", "mi chiamo luca"),
+    ("spock chi parla più piano", "parla più piano"), ("ehi spooky dimmi", "dimmi"),
+])
+def test_the_name_is_heard_by_its_sound(heard, rest):
+    from services.audio import wake_match
+    assert wake_match(heard) == rest
+
+
+@pytest.mark.parametrize("heard", [
+    "che ore sono", "sono stanco oggi", "il piatto è sporco", "metti lo spot alla radio",
+    "spesso arrivo tardi", "spot", "parlami di te", "scusa puoi ripetere",
+])
+def test_ordinary_sentences_do_not_wake_it(heard):
+    from services.audio import wake_match
+    assert wake_match(heard) is None
+
+
+def test_volume_scales_and_mutes(tmp_path):
+    import wave
+    from services.audio import AudioOutput
+    out = AudioOutput(RecordingBus(), method="silent")
+    out._volume_file = tmp_path / "audio.json"
+    wav = tmp_path / "a.wav"
+
+    def write():
+        with wave.open(str(wav), "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+            w.writeframes((np.ones(1600) * 20000).astype(np.int16).tobytes())
+
+    def peak():
+        with wave.open(str(wav)) as r:
+            return int(np.abs(np.frombuffer(r.readframes(r.getnframes()), np.int16)).max())
+
+    out.set_volume(50); write()
+    assert out._apply_volume(str(wav)) and peak() == 5000                # square curve: 50 → a quarter
+    assert out.set_volume(250) == 100 and out.set_volume(-5) == 0
+    assert out._apply_volume(str(wav)) is False                          # muted: nothing played
+    assert AudioOutput(RecordingBus(), method="silent")._volume_file      # saved for next time
+    assert '"volume": 0' in (tmp_path / "audio.json").read_text()
+
+
+# ── expressions ───────────────────────────────────────────────────────────────
+
+def expressive(track, expression, conf=0.8, emb=None):
+    return {**face(track, emb), "expression": expression, "expression_confidence": conf, "expression_age_s": 0.1}
+
+
+def test_an_expression_counts_once_it_lasts(vision, monkeypatch):
+    v, bus, _, _ = vision
+    from core.bus import EventType
+    import services.vision as sv
+    t = [1000.0]
+    monkeypatch.setattr(sv.time, "monotonic", lambda: t[0])
+    for label in ("happy", "happy", "sad", "happy"):            # flickers: nothing yet
+        v._process_body_faces(snap(expressive(3, label)))
+        t[0] += 0.25
+    assert not bus.of(EventType.EXPRESSION_CHANGED)
+    for _ in range(6):                                          # 1.5 s of the same: announced once
+        v._process_body_faces(snap(expressive(3, "happy")))
+        t[0] += 0.25
+    changed = bus.of(EventType.EXPRESSION_CHANGED)
+    assert len(changed) == 1 and changed[0]["expression"] == "happy" and changed[0]["previous"] is None
+    assert v.expression_now()["expression"] == "happy"
+    v._process_body_faces(snap(expressive(3, "happy", conf=0.3)))  # unsure: ignored
+    assert len(bus.of(EventType.EXPRESSION_CHANGED)) == 1
+
+
+class FakeModes:
+    def __init__(self, mode):
+        from core.modes import Mode
+        self.current, self.Mode, self.transitions = mode, Mode, []
+
+    def request_transition(self, mode, reason=""):
+        self.transitions.append((mode, reason))
+        self.current = mode
+        return True
+
+
+class FakeAudio:
+    def __init__(self):
+        self.said = []
+
+    def say(self, text, wait=False, feeling=None):
+        self.said.append((text, feeling))
+
+
+class FakeMotor:
+    def __init__(self):
+        self.calls = []
+
+    def __getattr__(self, name):
+        return lambda *a, **k: self.calls.append(name)
+
+
+@pytest.fixture
+def empathy():
+    from core.modes import Mode
+    from skills.empathy_skill import EmpathySkill
+    bus, modes, audio, motor, t = Bus(), FakeModes(Mode.COMPANION_DAY), FakeAudio(), FakeMotor(), [0.0]
+    skill = EmpathySkill(bus, modes, audio, motor, clock=lambda: t[0])
+    skill.start()
+    return skill, bus, modes, audio, motor, t
+
+
+class Bus:
+    def __init__(self):
+        self.handlers = {}
+
+    def subscribe(self, event, fn):
+        self.handlers.setdefault(event, []).append(fn)
+
+    def publish(self, event, payload=None, source=""):
+        class Ev(dict):
+            def get(self, k, d=None):
+                return dict.get(self, k, d)
+        for fn in self.handlers.get(event, []):
+            fn(Ev(payload or {}))
+
+
+def wait_for(cond):
+    import time as _t
+    for _ in range(100):
+        if cond():
+            return True
+        _t.sleep(0.01)
+    return cond()
+
+
+def test_a_smile_is_shared(empathy):
+    skill, bus, modes, audio, motor, t = empathy
+    from core.bus import EventType
+    bus.publish(EventType.EXPRESSION_CHANGED, {"expression": "happy", "track_id": 1, "name": "Samuele", "person_id": "p1"})
+    assert wait_for(lambda: audio.said and "wiggle_dance" in motor.calls)
+    assert audio.said[0][1] == "happy"
+
+
+def test_sadness_gets_a_gentle_word_and_gentler_replies(empathy):
+    skill, bus, modes, audio, motor, t = empathy
+    from core.bus import EventType
+    bus.publish(EventType.EXPRESSION_CHANGED, {"expression": "sad", "track_id": 1})
+    assert wait_for(lambda: audio.said) and audio.said[0][1] == "sad"
+    assert skill.mood_of_company == "sad"
+
+
+def test_anger_gets_space(empathy):
+    skill, bus, modes, audio, motor, t = empathy
+    from core.bus import EventType
+    bus.publish(EventType.EXPRESSION_CHANGED, {"expression": "angry", "track_id": 1})
+    assert wait_for(lambda: audio.said)
+    assert "stop" in motor.calls and modes.current == modes.Mode.FOCUS_ASSISTANT
+    modes.current = modes.Mode.COMPANION_DAY
+    t[0] += 60
+    bus.publish(EventType.EXPRESSION_CHANGED, {"expression": "happy", "track_id": 1})
+    import time as _t; _t.sleep(0.05)
+    assert len(audio.said) == 1                                  # still giving space
+
+
+def test_it_does_not_nag(empathy):
+    skill, bus, modes, audio, motor, t = empathy
+    from core.bus import EventType
+    ev = {"expression": "surprised", "track_id": 1}
+    bus.publish(EventType.EXPRESSION_CHANGED, ev)
+    assert wait_for(lambda: len(audio.said) == 1)
+    t[0] += 10
+    bus.publish(EventType.EXPRESSION_CHANGED, ev)                # within the gap
+    t[0] += 30
+    bus.publish(EventType.EXPRESSION_CHANGED, ev)                # within its cooldown
+    t[0] += 120
+    bus.publish(EventType.EXPRESSION_CHANGED, ev)
+    assert wait_for(lambda: len(audio.said) == 2)
+
+
+def test_quiet_modes_get_no_reactions(empathy):
+    skill, bus, modes, audio, motor, t = empathy
+    from core.bus import EventType
+    modes.current = modes.Mode.NIGHT_WATCH
+    bus.publish(EventType.EXPRESSION_CHANGED, {"expression": "happy", "track_id": 1})
+    import time as _t; _t.sleep(0.05)
+    assert audio.said == []

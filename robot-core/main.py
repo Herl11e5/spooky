@@ -210,6 +210,8 @@ class RobotRuntime:
         self._social_memory = SocialMemory(self._bus, self._memory)
 
         # ── Skills ────────────────────────────────────────────────────────────────
+        from skills.empathy_skill import EmpathySkill
+        self._empathy = EmpathySkill(self._bus, self._modes, self._audio, self._motor)
         self._skill_track = TrackFaceSkill(
             self._bus, self._modes, self._safety, self._motor, self._memory
         )
@@ -306,6 +308,7 @@ class RobotRuntime:
         self._dashboard.start()
         # Start face tracking and idle behaviour immediately
         self._skill_track.start()
+        self._empathy.start()
         self._skill_idle.start()
         self._active = True
 
@@ -323,6 +326,7 @@ class RobotRuntime:
         self._motor.stop()
         self._motor.look_center()
         self._skill_track.stop()
+        self._empathy.stop()
         self._skill_idle.stop()
         self._skill_patrol.stop()
         self._skill_play.stop()

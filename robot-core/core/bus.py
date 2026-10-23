@@ -32,6 +32,7 @@ class EventType:
     PERSON_IDENTIFIED       = "person_identified"
     PERSON_UNKNOWN          = "person_unknown"
     PERSON_LOST             = "person_lost"
+    EXPRESSION_CHANGED      = "expression_changed"   # the face in front changed expression, and kept it
     MOTION_DETECTED         = "motion_detected"
     UNUSUAL_SOUND           = "unusual_sound_detected"
     DESK_DISTURBANCE        = "desk_disturbance_detected"
