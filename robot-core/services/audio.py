@@ -98,6 +98,10 @@ class AudioOutput:
     # nothing is played, but the words still reach the chat.
 
     @property
+    def method(self) -> str:
+        return self._method
+
+    @property
     def volume(self) -> int:
         return self._volume
 
@@ -563,6 +567,10 @@ class AudioInput:
         self._active  = False
         self._state   = self._STATE_IDLE
         self._thread: Optional[threading.Thread] = None
+        # For health(): when the last half second of audio arrived, and why there is none.
+        self.heard_at = 0.0
+        self.model_loaded = False
+        self.problem = ""
         self._command_parts: List[str] = []
         self._last_speech_ts: float = 0.0
 
@@ -584,6 +592,7 @@ class AudioInput:
 
     def start(self) -> bool:
         if not self._vosk_model_path.exists():
+            self.problem = f"no Vosk model at {self._vosk_model_path}"
             log.error(
                 f"Vosk model not found at {self._vosk_model_path}. "
                 f"Download: curl -L https://alphacephei.com/vosk/models/vosk-model-small-it-0.22.zip | "
@@ -594,6 +603,7 @@ class AudioInput:
             import sounddevice  # noqa — check it's installed
             import vosk         # noqa
         except ImportError as e:
+            self.problem = f"missing {e.name}"
             log.error(f"AudioInput: missing dependency — {e}. pip install vosk sounddevice")
             return False
 
@@ -647,6 +657,7 @@ class AudioInput:
         # The name, spotted by a recogniser that may only hear it or [unk] (WakeSpotter).
         kws = vosk.KaldiRecognizer(model, 16000, json.dumps([self._wake_word, "[unk]"]))
         kws.SetWords(True)
+        self.model_loaded = True
         spotter = WakeSpotter(self._wake_word,
                               strict_fn=lambda: time.time() - self._moved_at < self._MOTION_TAIL_S)
         stream_s = 0.0
@@ -672,6 +683,7 @@ class AudioInput:
                 while self._active:
                     data, _ = stream.read(blocksize)
                     raw = bytes(data)
+                    self.heard_at = time.time()
                     # Resample to 16000 Hz if needed (numpy — Python 3.13 safe)
                     if hw_rate != 16000:
                         raw = self._resample_numpy(raw, hw_rate, 16000)
@@ -856,6 +868,20 @@ class AudioService:
 
     def say(self, text: str, wait: bool = False, feeling: Optional[str] = None) -> None:
         self._out.say(text, wait=wait, feeling=feeling)
+
+    _MIC_FRESH_S = 3.0      # audio arrives every half second while the stream runs
+
+    def health(self, now: Optional[float] = None) -> dict:
+        """Microphone, speech recognition and voice: each working or not (services/health.py)."""
+        inp = self._inp
+        age = (now or time.time()) - inp.heard_at if inp.heard_at else None
+        return {
+            "microphone": {"ok": age is not None and age < self._MIC_FRESH_S,
+                           "detail": inp.problem or ("no audio yet" if age is None else f"audio {age:.1f} s ago")},
+            "speech": {"ok": inp.model_loaded,
+                       "detail": inp.problem or ("Vosk model loaded" if inp.model_loaded else "loading")},
+            "voice": {"ok": self._out.method != AudioOutput.M_SILENT, "detail": self._out.method},
+        }
 
     @property
     def volume(self) -> int:

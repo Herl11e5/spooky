@@ -279,6 +279,7 @@ class RobotRuntime:
             mind         = self._mind,
             sensor       = self._sensors,
             knowledge    = self._knowledge,
+            body         = self._body,
         )
 
         # ── Subscribe to lifecycle events ─────────────────────────────────────

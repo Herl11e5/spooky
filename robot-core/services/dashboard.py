@@ -3,7 +3,7 @@ services/dashboard.py — Cartoon-style live dashboard.
 
 GET  /            → HTML dashboard
 GET  /camera      → MJPEG stream
-GET  /api/state   → full JSON state
+GET  /api/state   → full JSON state, with each part working or not (services/health.py)
 GET  /api/persons → known persons
 GET  /api/memory  → episodes + facts
 GET  /api/alerts  → night watch alerts
@@ -76,7 +76,7 @@ class DashboardService:
     def __init__(self, bus, mode_manager, memory, alert_svc, conscience,
                  cmd_queue, cfg, night_watch=None, experiments=None,
                  summarizer=None, learning=None, vision=None, motor=None,
-                 audio=None, mind=None, sensor=None, knowledge=None):
+                 audio=None, mind=None, sensor=None, knowledge=None, body=None):
         self._bus = bus
         self._mm = mode_manager
         self._memory = memory
@@ -94,6 +94,7 @@ class DashboardService:
         self._mind = mind
         self._sensor = sensor
         self._knowledge = knowledge
+        self._body = body
         self._last_scan: list = []
         self._host = cfg.get("dashboard.host", "0.0.0.0")
         self._port = int(cfg.get("dashboard.port", 5000))
@@ -162,6 +163,9 @@ class DashboardService:
             s["llm"] = {"ok": bool(getattr(brain, "_ok", False)), "model": getattr(brain, "_model", None)}
             from core.version import version
             s["version"] = version()
+            from services.health import components
+            s["components"] = components(self._audio, self._body)
+            s["healthy"] = True     # it answers; the parts say the rest
             return jsonify(s)
 
         @app.route("/api/diag")
