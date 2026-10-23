@@ -480,6 +480,12 @@ class AudioInput:
         # Callbacks registered externally (optional, events are preferred)
         self._on_command: Optional[Callable[[str], None]] = None
 
+        # Its own voice comes back through the mic: while it speaks, and a moment
+        # after, what is heard is marked as its own and never wakes it or commands it.
+        self._own_until = 0.0
+        bus.subscribe(EventType.TTS_STARTED, lambda ev: setattr(self, "_own_until", float("inf")))
+        bus.subscribe(EventType.TTS_FINISHED, lambda ev: setattr(self, "_own_until", time.time() + self._OWN_TAIL_S))
+
     def start(self) -> bool:
         if not self._vosk_model_path.exists():
             log.error(
@@ -608,12 +614,17 @@ class AudioInput:
 
     # ── state machine ──────────────────────────────────────────────────────────
 
+    _OWN_TAIL_S = 1.0     # the room still echoes it, and Vosk finishes the sentence late
+
     def _handle_text(self, text: str, final: bool) -> None:
+        own = time.time() < self._own_until
         self._bus.publish(
             EventType.SPEECH_TRANSCRIBED,
-            {"text": text, "final": final},
+            {"text": text, "final": final, "own": own},
             source="AudioInput",
         )
+        if own:
+            return
 
         if self._state == self._STATE_IDLE:
             remainder = wake_match(text, self._wake_word)

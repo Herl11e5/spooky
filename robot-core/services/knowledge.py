@@ -122,10 +122,12 @@ class KnowledgeService:
 
     def __init__(self, bus: EventBus, db_path: Path, cfg=None,
                  embedder=None, chat: Optional[Callable[[str], str]] = None,
-                 clock: Callable[[], float] = time.time) -> None:
+                 clock: Callable[[], float] = time.time,
+                 moving_fn: Optional[Callable[[], bool]] = None) -> None:
         get = (lambda k, d: cfg.get(f"knowledge.{k}", d)) if cfg is not None else (lambda k, d: d)
         self._bus = bus
         self._clock = clock
+        self._moving_fn = moving_fn           # the body walking: servo noise, not words
         self._embedder = embedder or OllamaEmbedder(get("embed_model", "embeddinggemma"))
         self._chat = chat or _ollama_chat(get("model", "gemma3:12b"))
         self._min_words = int(get("min_words", 3))
@@ -193,6 +195,8 @@ class KnowledgeService:
         text = (ev.get("text") or "").strip()
         if not ev.get("final") or not self._ambient or len(text.split()) < self._min_words:
             return
+        if ev.get("own") or (self._moving_fn is not None and self._moving_fn()):
+            return                            # its own voice, or its own motors
         if text == self._last_heard:
             return
         self._last_heard = text

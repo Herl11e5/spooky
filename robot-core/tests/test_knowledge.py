@@ -163,3 +163,15 @@ def test_forgetting_a_person(mem):
     k.forget_person("Luca")
     assert [f["text"] for f in k.facts()] == ["The office closes at seven"]
     assert not any("Luca" in line for line in k.recall("Luca ferie agosto"))
+
+
+def test_its_own_voice_and_motors_are_not_remembered(tmp_path):
+    clock, bus, emb = Clock(), Bus(), BagOfWords()
+    moving = [False]
+    k = KnowledgeService(bus, tmp_path / "k.db", embedder=emb, clock=clock, moving_fn=lambda: moving[0])
+    bus.emit(EventType.SPEECH_TRANSCRIBED, text="hello I am spooky your desk companion", final=True, own=True)
+    moving[0] = True
+    bus.emit(EventType.SPEECH_TRANSCRIBED, text="tra tra tra tra", final=True)
+    moving[0] = False
+    bus.emit(EventType.SPEECH_TRANSCRIBED, text="il caffè è pronto in cucina", final=True)
+    assert k.stats()["pending"] == 1

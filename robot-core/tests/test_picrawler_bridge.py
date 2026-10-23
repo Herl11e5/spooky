@@ -752,3 +752,32 @@ def test_social_memory_has_its_columns_on_an_old_database(tmp_path):
     with mem._get_db() as conn:
         row = conn.execute("SELECT display_name, attachment_level, loyalty_boost FROM social_profiles").fetchone()
     assert row == ("Padrone", 0.3, 0)
+
+
+def test_it_says_when_its_battery_runs_down_and_thanks_for_the_charge():
+    from services.body_watch import BodyWatch
+    audio, state = FakeAudio(), {"power": "ok"}
+    watch = BodyWatch(lambda: state, audio)
+    watch.check()
+    assert audio.said == []                                   # nothing to say at first
+    state["power"] = "low"; watch.check(); watch.check()
+    state["power"] = "critical"; watch.check()
+    state["power"] = "ok"; watch.check()
+    assert [f for _, f in audio.said] == ["sleepy", "sleepy", "happy"]
+
+
+def test_its_own_voice_does_not_wake_it():
+    from services.audio import AudioInput
+    from core.bus import EventType
+    bus = Bus()
+    heard = []
+    bus.subscribe(EventType.SPEECH_TRANSCRIBED, lambda ev: heard.append(ev))
+    bus.subscribe(EventType.WAKE_WORD_DETECTED, lambda ev: heard.append("woke"))
+    mic = AudioInput(bus)
+    bus.publish(EventType.TTS_STARTED, {"text": "I am spooky"})
+    mic._handle_text("spooky come stai", final=True)
+    assert "woke" not in heard and heard[-1]["own"] is True
+    bus.publish(EventType.TTS_FINISHED, {})
+    mic._own_until = 0.0                                      # the tail has passed
+    mic._handle_text("spooky come stai", final=True)
+    assert "woke" in heard

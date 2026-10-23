@@ -157,7 +157,8 @@ class RobotRuntime:
         self._memory = MemoryService(self._bus, db_path=db_path)
         from services.knowledge import KnowledgeService
         self._knowledge = KnowledgeService(
-            self._bus, ROOT / cfg.get("knowledge.db_path", "data/knowledge.db"), cfg)
+            self._bus, ROOT / cfg.get("knowledge.db_path", "data/knowledge.db"), cfg,
+            moving_fn=self._body.is_moving if self._body else None)
 
         # ── Audio ─────────────────────────────────────────────────────────────────
         self._audio = AudioService(self._bus, cfg)
@@ -212,6 +213,8 @@ class RobotRuntime:
         # ── Skills ────────────────────────────────────────────────────────────────
         from skills.empathy_skill import EmpathySkill
         self._empathy = EmpathySkill(self._bus, self._modes, self._audio, self._motor)
+        from services.body_watch import BodyWatch
+        self._body_watch = BodyWatch(lambda: self._body.state, self._audio) if self._body else None
         self._skill_track = TrackFaceSkill(
             self._bus, self._modes, self._safety, self._motor, self._memory
         )
@@ -309,6 +312,8 @@ class RobotRuntime:
         # Start face tracking and idle behaviour immediately
         self._skill_track.start()
         self._empathy.start()
+        if self._body_watch:
+            self._body_watch.start()
         self._skill_idle.start()
         self._active = True
 
@@ -327,6 +332,8 @@ class RobotRuntime:
         self._motor.look_center()
         self._skill_track.stop()
         self._empathy.stop()
+        if self._body_watch:
+            self._body_watch.stop()
         self._skill_idle.stop()
         self._skill_patrol.stop()
         self._skill_play.stop()
