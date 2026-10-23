@@ -869,12 +869,12 @@ class AudioInput:
         if own:
             return
 
-        if self._state == self._STATE_IDLE:
-            remainder = wake_match(text, self._wake_word)
-            if remainder is not None:
-                self._wake(remainder, text)
-
-        elif self._state == self._STATE_ACTIVE:
+        # Waking is the WakeSpotter's alone. The name's sound in the free transcript
+        # (wake_match) used to wake it too: since the spotter (2026-10-23 13:40) it
+        # never found a call the spotter missed, and on its own it woke on "spetta a
+        # lei", "sapevano già", "spietata con un falso" — any sentence starting with
+        # sp- and a k or t. It still keeps the name out of a command said again.
+        if self._state == self._STATE_ACTIVE:
             if final and text:
                 again = wake_match(text, self._wake_word)   # the name said again: not part of the command
                 self._command_parts.append(text if again is None else again)

@@ -781,11 +781,24 @@ def test_its_own_voice_does_not_wake_it():
     mic = AudioInput(bus)
     bus.publish(EventType.TTS_STARTED, {"text": "I am spooky"})
     mic._handle_text("spooky come stai", final=True)
+    mic._wake("come stai", "(spotted) come stai")             # the spotter heard its own voice
     assert "woke" not in heard and heard[-1]["own"] is True
     bus.publish(EventType.TTS_FINISHED, {})
     mic._own_until = 0.0                                      # the tail has passed
-    mic._handle_text("spooky come stai", final=True)
+    mic._wake("come stai", "(spotted) come stai")
     assert "woke" in heard
+
+
+def test_a_sentence_starting_with_sp_does_not_wake_it():
+    from services.audio import AudioInput
+    from core.bus import EventType
+    bus = Bus()
+    woke = []
+    bus.subscribe(EventType.WAKE_WORD_DETECTED, lambda ev: woke.append(ev))
+    mic = AudioInput(bus)
+    for heard in ("spietata con un falso", "spetta a lei dislivello", "sporchi come stai"):
+        mic._handle_text(heard, final=True)                  # only the WakeSpotter wakes it
+    assert not woke
 
 
 def test_engagement_keeps_the_enrolled_name(tmp_path):
