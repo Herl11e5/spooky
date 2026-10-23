@@ -1,0 +1,26 @@
+# Every push and pull request: robot-core's tests. No microphone, camera, speaker
+# or Ollama needed — the bridge to the picrawler body is tested against fakes.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: robot-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: robot-core/requirements.txt
+      - name: PortAudio (sounddevice)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libportaudio2
+      - run: pip install -r requirements.txt pytest
+      - run: python -m pytest -q
