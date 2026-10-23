@@ -487,9 +487,13 @@ class WakeSpotter:
     def spotted(self, words: list) -> None:
         """Words of a final result from the grammar recogniser."""
         for w in words:
-            if w.get("word") == self._word and w.get("conf", 0.0) >= self._min_conf:
-                self._name_start = float(w["start"])
-                return
+            if w.get("word") == self._word:
+                ok = w.get("conf", 0.0) >= self._min_conf
+                log.info(f"Name spotted at {w['start']:.1f}s, confidence {w.get('conf', 0.0):.2f}"
+                         f"{'' if ok else ' — too unsure'}")
+                if ok:
+                    self._name_start = float(w["start"])
+                    return
 
     def heard(self, words: list) -> None:
         """Words of a final result from the free recogniser."""
@@ -753,8 +757,10 @@ class AudioInput:
     def _wake(self, remainder: str, heard: str) -> None:
         """The name was heard: listen for a command, starting with what followed it."""
         now = time.time()
-        if (self._state != self._STATE_IDLE or now < self._own_until or now < self._refractory_until
-                or now - self._moved_at < self._MOTION_TAIL_S):
+        if self._state != self._STATE_IDLE or now < self._own_until or now < self._refractory_until:
+            return
+        if now - self._moved_at < self._MOTION_TAIL_S:
+            log.info(f"Name heard while the body moved — ignored: '{heard}'")
             return
         self._refractory_until = now + self._REFRACTORY_S
         log.info(f"Wake word detected: '{heard}'")
