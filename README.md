@@ -1,7 +1,8 @@
 # Spooky — Robot Companion da Scrivania
 
 Robot autonomo basato su **SunFounder PiCrawler + Raspberry Pi 5 (8 GB)**.
-Completamente locale: nessun cloud, nessuna telemetria, tutti i dati restano sul dispositivo.
+Locale: nessun cloud, nessuna telemetria. I modelli linguistici girano su un computer della
+stessa rete (Ollama), i dati restano sul robot.
 
 ---
 
@@ -15,6 +16,36 @@ Completamente locale: nessun cloud, nessuna telemetria, tutti i dati restano sul
 | Microfono | USB o I2S |
 | Altoparlante | USB o I2S (es. HiFiBerry MiniAmp) |
 | Alimentazione | Ufficiale RPi 27W USB-C |
+
+---
+
+## Spooky come cervello del PiCrawler (ramo `picrawler-bridge`)
+
+Spooky può fare da **cervello** del corpo [robot-emulator](../robot-emulator): il corpo
+(`picrawler.service`) è l'unico processo che muove i servo, legge camera, sonar e IMU e
+applica la sicurezza; Spooky gli manda *intenzioni* via HTTP (`services/picrawler_client.py`)
+con sorgente `brain`, la priorità più bassa: chi usa la dashboard o un gamepad ha sempre
+la precedenza. È la divisione `robotd`/client di microduck.
+
+- **Movimento**: `PicrawlerMotorService` traduce i comandi delle skill in passi e gesti del
+  corpo (saluta, annuisci, balla…); gli sguardi diventano inclinazioni del corpo, senza girarsi.
+  Il corpo lo lascia muovere solo con «Può muoversi da solo» acceso nella dashboard (spento a
+  ogni avvio), entro 15 cm da dove lo si è lasciato, e mai a batteria scarica.
+- **Volti ed espressioni**: li trova il corpo, accanto alla camera (YuNet, SFace, MobileFaceNet)
+  e ne pubblica posizione, *embedding* d'identità ed espressione; Spooky riconosce le persone
+  confrontando gli embedding (`EmbeddingRecognizer`) e reagisce alle espressioni
+  (`skills/empathy_skill.py`). Nessun fotogramma viene scaricato per i volti.
+- **Memoria** (`services/knowledge.py`): ciò che sente intorno (solo testo), vede e dice diventa
+  osservazione; prima di ogni risposta richiama i ricordi più vicini per significato
+  (embeddinggemma); ogni notte li distilla in fatti duraturi (gemma3) e cancella il testo grezzo.
+- **Voce**: risponde in inglese con la propria lingua droide (`services/droid_voice.py`);
+  capisce l'italiano (Vosk). Il nome si riconosce dal suono (`wake_match`): il modello italiano
+  non scrive mai «spooky».
+- **Sul Pi**: `spooky-brain.service` (`deploy/`), configurazione `config/picrawler-pi.yaml`;
+  si installa con `python scripts/release.py spooky` dal repository del corpo, che verifica la
+  versione sul robot e torna alla precedente se non parte.
+
+Tutto si gestisce dalla dashboard del corpo (`http://<robot>:8000`, pannello «Cervello»).
 
 ---
 
@@ -265,7 +296,12 @@ python -m pytest tests/ -v
 ## Note privacy e sicurezza
 
 - Tutti i dati biometrici (volti, embeddings) restano sul dispositivo — mai trasmessi
-- Nessuna registrazione audio continua: il microfono è attivo solo dopo wake-word
+- L'audio non viene mai registrato. Con «Ascolta e ricorda tutto» acceso (dashboard → Memoria)
+  Spooky tiene il **testo** di ciò che sente intorno, anche di chi non gli parla: ogni notte ne
+  ricava fatti e cancella il testo dopo 48 ore. Va spento dove ci sono persone che non lo sanno
+  (in Italia tenere conversazioni altrui senza consenso può essere reato, e il controllo a
+  distanza dei lavoratori è regolato). Spento, ricorda solo ciò che gli viene detto
+- «Dimentica» su una persona cancella volto, ricordi e fatti imparati su di lei
 - Snapshot notturni: solo metadati JSON di default (`save_jpeg: false`)
 - Safety monitor hardware: stop automatico su ostacolo < 15 cm, CPU > 80°C, RAM < 300 MB
 - `config/local.yaml` è in `.gitignore` — token e credenziali non vengono mai committati
