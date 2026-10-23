@@ -216,7 +216,7 @@ class Summarizer:
             log.debug("Summarizer: ollama busy — using template")
             return None
         try:
-            import ollama
+            from services import llm_host
             episode_text = "\n".join(
                 f"- [{ep.get('action','')}] {ep.get('what','')}"
                 for ep in episodes[:15]
@@ -226,7 +226,7 @@ class Summarizer:
                 f"plain words, no emoji. "
                 f"Contesto: {context}.\n\nEventi:\n{episode_text}"
             )
-            resp = ollama.chat(
+            resp = llm_host.client().chat(
                 model=self._llm_model,
                 messages=[{"role": "user", "content": prompt}],
                 options={"temperature": 0.3, "num_predict": 80},

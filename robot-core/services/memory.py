@@ -109,6 +109,13 @@ class MemoryService:
         # Initialise schema immediately so reads are safe before start() is called
         conn = sqlite3.connect(str(self._db_path))
         conn.executescript(_SCHEMA)
+        # SocialMemoryService keeps a bond per person in two columns the schema never
+        # had: add them to databases made before, leaving every row as it is.
+        have = {row[1] for row in conn.execute("PRAGMA table_info(social_profiles)")}
+        for column, decl in (("attachment_level", "REAL NOT NULL DEFAULT 0.3"),
+                             ("loyalty_boost", "INTEGER NOT NULL DEFAULT 0")):
+            if column not in have:
+                conn.execute(f"ALTER TABLE social_profiles ADD COLUMN {column} {decl}")
         conn.commit()
         conn.close()
 
@@ -141,6 +148,12 @@ class MemoryService:
             )
             self._local.conn.row_factory = sqlite3.Row
         return self._local.conn
+
+    def _get_db(self) -> sqlite3.Connection:
+        """A connection of its own, for SocialMemoryService (`with memory._get_db() as conn:`)."""
+        conn = sqlite3.connect(str(self._db_path), check_same_thread=False, timeout=5)
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
 
     def _enqueue_write(self, sql: str, params: tuple = ()) -> None:
         self._write_q.put((sql, params))

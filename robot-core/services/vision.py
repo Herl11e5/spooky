@@ -952,8 +952,12 @@ class VisionService:
     def _scene_loop(self) -> None:
         last_scene  = 0.0
         last_object = 0.0
+        last_resolve = time.time()
         while self._active:
             now = time.time()
+            if not self._vision_model and now - last_resolve > 60:
+                self._vision_model = self._resolve_vision_model()   # the Mac may be back
+                last_resolve = now
             if self._vision_model:
                 if now - last_scene >= self._scene_interval:
                     self._analyze_scene()
@@ -982,11 +986,11 @@ class VisionService:
             log.debug("VisionService: scene skip — vision lock busy >30s")
             return
         try:
-            import ollama
+            from services import llm_host
             img_b64    = self._frame_to_b64(frame)
             keep_alive = self._cfg.get("vision_llm.keep_alive_s", 300)
             max_tok    = self._cfg.get("vision_llm.max_tokens", 80)
-            resp = ollama.chat(
+            resp = llm_host.client().chat(
                 model=self._vision_model,
                 messages=[{
                     "role": "user",
@@ -1020,10 +1024,10 @@ class VisionService:
             log.debug("VisionService: objects skip — vision lock busy >30s")
             return
         try:
-            import ollama
+            from services import llm_host
             img_b64    = self._frame_to_b64(frame)
             keep_alive = self._cfg.get("vision_llm.keep_alive_s", 300)
-            resp = ollama.chat(
+            resp = llm_host.client().chat(
                 model=self._vision_model,
                 messages=[{
                     "role": "user",
@@ -1090,8 +1094,8 @@ class VisionService:
             "moondream", "llava:7b", "llava"
         ]
         try:
-            import ollama
-            available = [m.model for m in ollama.list().models]
+            from services import llm_host
+            available = [m.model for m in llm_host.client().list().models]
             for pref in priority:
                 for name in available:
                     if pref == name or name.startswith(pref + ":") or pref in name:

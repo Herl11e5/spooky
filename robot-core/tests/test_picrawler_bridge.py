@@ -734,3 +734,21 @@ def test_quiet_modes_get_no_reactions(empathy):
     bus.publish(EventType.EXPRESSION_CHANGED, {"expression": "happy", "track_id": 1})
     import time as _t; _t.sleep(0.05)
     assert audio.said == []
+
+
+def test_social_memory_has_its_columns_on_an_old_database(tmp_path):
+    import sqlite3
+    from services.memory import MemoryService
+    db = tmp_path / "memory.db"
+    old = sqlite3.connect(str(db))      # a database from before: no attachment columns
+    old.execute("CREATE TABLE social_profiles (person_id TEXT PRIMARY KEY, display_name TEXT NOT NULL, "
+                "familiarity REAL NOT NULL DEFAULT 0.0, greeting_style TEXT NOT NULL DEFAULT 'casual', "
+                "interruption_tolerance REAL NOT NULL DEFAULT 0.5, usual_hours_start INTEGER NOT NULL DEFAULT 8, "
+                "usual_hours_end INTEGER NOT NULL DEFAULT 22, interaction_count INTEGER NOT NULL DEFAULT 0, "
+                "last_seen REAL, notes TEXT NOT NULL DEFAULT '')")
+    old.execute("INSERT INTO social_profiles(person_id, display_name) VALUES ('padrone', 'Padrone')")
+    old.commit(); old.close()
+    mem = MemoryService(RecordingBus(), db_path=db)
+    with mem._get_db() as conn:
+        row = conn.execute("SELECT display_name, attachment_level, loyalty_boost FROM social_profiles").fetchone()
+    assert row == ("Padrone", 0.3, 0)

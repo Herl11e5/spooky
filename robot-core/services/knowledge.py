@@ -102,8 +102,8 @@ class OllamaEmbedder:
 
 def _ollama_chat(model: str) -> Callable[[str], str]:
     def chat(prompt: str) -> str:
-        import ollama
-        resp = ollama.chat(model=model, messages=[{"role": "user", "content": prompt}],
+        from services import llm_host
+        resp = llm_host.client().chat(model=model, messages=[{"role": "user", "content": prompt}],
                            format="json", options={"temperature": 0.2, "num_predict": 700},
                            keep_alive=600)
         return resp.message.content if hasattr(resp, "message") else resp["message"]["content"]

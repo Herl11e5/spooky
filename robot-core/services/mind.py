@@ -128,9 +128,10 @@ class OllamaBrain:
         self._init_model()
 
     def _init_model(self) -> None:
+        self._init_at = time.time()
         try:
-            import ollama
-            available = [m.model for m in ollama.list().models]
+            from services import llm_host
+            available = [m.model for m in llm_host.client().list().models]
             self._model = self._select_model(available)
             if self._model:
                 self._ok = True
@@ -164,6 +165,8 @@ class OllamaBrain:
             if len(self._history) > self._max_history * 2:
                 self._history = self._history[-self._max_history * 2:]
 
+        if (not self._ok or self._model is None) and time.time() - getattr(self, "_init_at", 0) > 60:
+            self._init_model()            # the Mac may have come back since
         if not self._ok or self._model is None:
             reply = random.choice(_FALLBACK_IT)
             with self._lock:
@@ -190,7 +193,7 @@ class OllamaBrain:
             return reply
 
         try:
-            import ollama
+            from services import llm_host
             system = SYSTEM_PROMPT_TEMPLATE.format(context=context) if context else _SYSTEM_PROMPT
             system += time.strftime("\n\nRight now it is %A %d %B %Y, %H:%M.")
             with self._lock:
@@ -198,7 +201,7 @@ class OllamaBrain:
                     [{"role": "system", "content": system}]
                     + list(self._history)
                 )
-            resp = ollama.chat(
+            resp = llm_host.client().chat(
                 model=self._model,
                 messages=messages,
                 options={

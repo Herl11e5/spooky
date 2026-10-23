@@ -107,6 +107,8 @@ class SeekAttentionSkill(Skill):
 
     def _on_person_responds(self, event_data: dict) -> None:
         """Person responded! Skill's work is done."""
+        if not self.is_running:
+            return      # subscribed for good, but "finally!" only answers its own calls
         log.info("SeekAttentionSkill: person responded!")
         self._audio.say("Finally! What did you want me to do?")
         self.stop()

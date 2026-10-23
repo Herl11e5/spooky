@@ -158,6 +158,8 @@ class DashboardService:
             if self._conscience:
                 s["drives"] = self._conscience.to_dict()
             s["mode"] = self._mm.current.value
+            brain = getattr(self._mind, "_brain", None)
+            s["llm"] = {"ok": bool(getattr(brain, "_ok", False)), "model": getattr(brain, "_model", None)}
             return jsonify(s)
 
         @app.route("/api/diag")
@@ -166,8 +168,8 @@ class DashboardService:
             diag = {}
             # Ollama
             try:
-                import ollama
-                models = [m.model for m in ollama.list().models]
+                from services import llm_host
+                models = [m.model for m in llm_host.client().list().models]
                 diag["ollama"] = {"running": True, "models": models}
             except Exception as e:
                 diag["ollama"] = {"running": False, "error": str(e)}
