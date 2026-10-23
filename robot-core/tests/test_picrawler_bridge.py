@@ -860,3 +860,15 @@ def test_a_command_ends_after_silence_without_more_speech():
     if mic._state == mic._STATE_ACTIVE and time.time() - mic._last_speech_ts >= mic._command_timeout:
         mic._emit_command()
     assert commands == ["come stai"]
+
+
+def test_after_a_lone_name_it_waits_longer_for_the_command_to_start():
+    from services.audio import AudioInput
+    mic = AudioInput(Bus(), command_timeout_s=1.5)
+    mic._wake("", "(spotted) ")
+    waited = time.time() - mic._last_speech_ts + 2.0               # two seconds of thinking
+    limit = mic._command_timeout if any(mic._command_parts) else mic._FIRST_WORDS_S
+    assert waited < limit                                           # still listening
+    mic._wake  # once words came, the usual 1.5 s of silence ends it
+    mic._command_parts = ["parla più forte"]
+    assert (mic._command_timeout if any(mic._command_parts) else mic._FIRST_WORDS_S) == 1.5

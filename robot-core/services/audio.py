@@ -273,6 +273,34 @@ class AudioOutput:
             log.warning(f"piper: {e} — using espeak-ng")
             self._espeak_aplay(text, wav_path)
 
+    def chirp(self) -> None:
+        """
+        A short rising blip: "I heard my name, go on". Played without the TTS events
+        on purpose: they would mark the next second as its own voice and swallow the
+        start of the command; a blip has no words for the recogniser to mistake.
+        """
+        if self._volume <= 0 or not self._aplay_dev:
+            return
+
+        def _do():
+            import wave as _wave
+            import numpy as np
+            from services.droid_voice import RATE, _tone
+            blip = (np.concatenate([_tone(900, 1500, 0.09, "whistle"), np.zeros(int(0.03 * RATE)),
+                                    _tone(1200, 1900, 0.07, "blip")]) * 0.6 * 32767).astype(np.int16)
+            fd, wav = tempfile.mkstemp(suffix=".wav", prefix="spooky_chirp_")
+            os.close(fd)
+            try:
+                with _wave.open(wav, "wb") as wf:
+                    wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(RATE)
+                    wf.writeframes(blip.tobytes())
+                if self._apply_volume(wav):
+                    subprocess.run(["aplay", "-q", "-D", self._aplay_dev, wav], capture_output=True, timeout=5)
+            finally:
+                os.unlink(wav)
+
+        threading.Thread(target=_do, daemon=True, name="Chirp").start()
+
     def _droid_speak(self, text: str, wav_path: str, feeling: Optional[str] = None) -> None:
         """Spooky's own language: the words become whistles and clicks; the text stays in the chat."""
         import wave as _wave
@@ -660,8 +688,8 @@ class AudioInput:
                     # The command ends after a silence — checked here, every half second:
                     # waiting for the next transcript to check it left a command hanging
                     # until somebody spoke again.
-                    if (self._state == self._STATE_ACTIVE
-                            and time.time() - self._last_speech_ts >= self._command_timeout):
+                    if self._state == self._STATE_ACTIVE and time.time() - self._last_speech_ts >= (
+                            self._command_timeout if any(self._command_parts) else self._FIRST_WORDS_S):
                         self._emit_command()
         except Exception as e:
             log.error(f"AudioInput stream error: {e}")
@@ -697,6 +725,7 @@ class AudioInput:
     # ── state machine ──────────────────────────────────────────────────────────
 
     _OWN_TAIL_S = 1.0     # the room still echoes it, and Vosk finishes the sentence late
+    _FIRST_WORDS_S = 5.0  # after a lone name, time to start the command — people pause
 
     def _handle_text(self, text: str, final: bool) -> None:
         own = time.time() < self._own_until
@@ -785,6 +814,7 @@ class AudioService:
         device       = audio_cfg.get("mic_device", None)   # None = sounddevice default
         cmd_timeout  = audio_cfg.get("command_timeout_s", 3.0)
 
+        bus.subscribe(EventType.WAKE_WORD_DETECTED, lambda ev: self._out.chirp())
         self._out = AudioOutput(bus, language=lang, method=tts_method,
                                 speaker_pin=audio_cfg.get("speaker_enable_pin"),
                                 piper_voice=audio_cfg.get("piper_voice"),
