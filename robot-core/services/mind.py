@@ -313,15 +313,23 @@ class OllamaBrain:
                 if piece:
                     said.append(piece)
                     on_sentence(piece)
+        last = None
         try:
             for chunk in llm_host.client().chat(model=self._model, messages=messages, options=options,
                                                 keep_alive=self._keep_alive, stream=True):
                 hand_over(split.feed(self._extract_raw(chunk)))
+                last = chunk
         except Exception as e:
             if not said:
                 raise                              # nothing said yet: the caller falls back
             log.warning(f"OllamaBrain: stream cut short ({e}); keeping what was said")
         hand_over(split.flush())
+        stats = {k: getattr(last, k, None) or (last.get(k) if isinstance(last, dict) else None)
+                 for k in ("prompt_eval_count", "prompt_eval_duration", "eval_count", "eval_duration")} if last else {}
+        if stats.get("prompt_eval_count"):
+            log.info(f"Model: prompt {stats['prompt_eval_count']} tokens in {(stats['prompt_eval_duration'] or 0) // 1_000_000} ms, "
+                     f"reply {stats['eval_count']} tokens in {(stats['eval_duration'] or 0) // 1_000_000} ms "
+                     f"({len(messages) - 1} messages of history)")
         return " ".join(said)
 
     @staticmethod
