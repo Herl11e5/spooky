@@ -266,6 +266,7 @@ class RobotRuntime:
         self._night_watch = NightWatchService(
             self._bus, self._modes, self._motor, self._choreo,
             self._audio, self._memory, self._vision, self._safety, cfg,
+            seated_body=self._body is not None,
         )
 
         # ── Dashboard ─────────────────────────────────────────────────────────────

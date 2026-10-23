@@ -15,6 +15,12 @@ Additional night-watch duties:
   - Periodic patrol: every N minutes, rotate 360° and scan
   - Snapshot: on L2+, save JPEG to data/snapshots/ (if enabled)
 
+With the PiCrawler body (seated_body): it sits down on entering and watches with
+the camera and the microphone, which need no moving. Leaning the body around every
+ten minutes kept it standing all night — servos on, battery draining — because each
+lean counted as activity and the body's own idle sit never came. No alert moves it
+either, and morning does not stand it up with nobody there.
+
 Privacy:
   - No continuous video recording
   - Snapshots are event-triggered and stored locally only
@@ -91,6 +97,7 @@ class NightWatchService:
         vision,         # VisionService (for snapshots)
         safety,         # SafetyMonitor
         cfg,
+        seated_body: bool = False,
     ):
         self._bus     = bus
         self._mm      = mode_manager
@@ -101,6 +108,7 @@ class NightWatchService:
         self._vision  = vision
         self._safety  = safety
         self._cfg     = cfg
+        self._seated  = seated_body
 
         # Config
         self._silent        = cfg.get("night_watch.silent_alerts",    True)
@@ -151,10 +159,16 @@ class NightWatchService:
     def _enter_night_watch(self) -> None:
         log.info("🌙 Entering night watch mode")
 
-        # Physical: sleep pose + look around
-        self._motor.look_center()
-        self._choreo.play("look_around", wait=True)
-        self._choreo.play("sleep_pose")
+        if self._seated:
+            # The body sits, servos off; the camera and the microphone keep watching.
+            sat = self._motor.sit()
+            log.info("NightWatch: sitting down to watch" if sat
+                     else "NightWatch: the body did not sit (nobody lets the brain move it) — watching as it is")
+        else:
+            # Physical: sleep pose + look around
+            self._motor.look_center()
+            self._choreo.play("look_around", wait=True)
+            self._choreo.play("sleep_pose")
 
         if not self._silent:
             self._audio.say("Night watch on. Good night.")
@@ -169,20 +183,22 @@ class NightWatchService:
             mode=Mode.NIGHT_WATCH.value,
         )
 
-        # Start periodic patrol
-        self._patrol_thread = threading.Thread(
-            target=self._patrol_loop, daemon=True, name="NW-Patrol"
-        )
-        self._patrol_thread.start()
+        # Start periodic patrol — not with a body: it would keep it standing all night
+        if not self._seated:
+            self._patrol_thread = threading.Thread(
+                target=self._patrol_loop, daemon=True, name="NW-Patrol"
+            )
+            self._patrol_thread.start()
 
     def _exit_night_watch(self) -> None:
         self._stop_patrol()
 
         log.info("🌅 Exiting night watch mode")
 
-        # Physical: wake up
-        self._choreo.play("wake_up", wait=True)
-        self._motor.look_center()
+        # Physical: wake up — a body stays seated until someone stands it up
+        if not self._seated:
+            self._choreo.play("wake_up", wait=True)
+            self._motor.look_center()
 
         # Generate and store nightly summary
         summary = self._generate_summary()
@@ -230,8 +246,8 @@ class NightWatchService:
         )
         log.info(f"NightWatch L{level}: {reason}")
 
-        # ── L1+: orient + scan ────────────────────────────────────────────────
-        if self._choreo:
+        # ── L1+: orient + scan (not a seated body: it watches without moving) ──
+        if self._choreo and not self._seated:
             self._choreo.play("alert", wait=True)
             self._choreo.play("look_around", wait=True)
 
