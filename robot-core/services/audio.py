@@ -503,6 +503,7 @@ class WakeSpotter:
         self._strict_conf = strict_conf
         self._wait = wait_s
         self._name_start: Optional[float] = None   # a name heard, its command not yet taken
+        self._name_s = 0.0                         # how long the grammar recogniser's "spooky" lasted
         self._utterances: List[list] = []          # recent free-recognition words
 
     def spotted(self, words: list) -> None:
@@ -515,6 +516,7 @@ class WakeSpotter:
                          f"{' (body moving)' if strict else ''}{'' if ok else ' — too unsure'}")
                 if ok:
                     self._name_start = float(w["start"])
+                    self._name_s = float(w.get("end", w["start"])) - float(w["start"])
                     return
 
     def heard(self, words: list) -> None:
@@ -538,7 +540,13 @@ class WakeSpotter:
         # spelling of the name starts with it, give or take a tenth of a second).
         before = [w for w in words if float(w["start"]) < name_at - 0.15 and float(w["end"]) <= name_at + 0.1]
         command = [w["word"] for w in words if float(w["start"]) >= begin]
-        context = f"'{' '.join(w['word'] for w in before[-4:])} | {' '.join(command)}'"
+        # And how the free recogniser spelt the name itself ("sporchi", "pochi"… for a
+        # real call): logged with the name's length to find what tells a call from a
+        # song or a conversation — on 2026-10-23 the false spots came at the start of
+        # utterances too, where the glued-name rule cannot see them.
+        heard_as = [w["word"] for w in words if name_at - 0.15 <= float(w["start"]) < begin]
+        context = (f"'{' '.join(w['word'] for w in before[-4:])} | {' '.join(heard_as) or '-'} "
+                   f"({self._name_s:.2f} s) | {' '.join(command)}'")
         if len(before) >= 2 and name_at - float(before[-1]["end"]) < self._GLUED_S \
                 and before[-1]["word"] not in self._GREETINGS:
             log.info(f"Name in the middle of a sentence — ignored: {context}")
