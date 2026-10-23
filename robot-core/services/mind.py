@@ -82,6 +82,28 @@ HOW YOU SPEAK:
 - Plain spoken words only: no emoji, no symbols, no lists, no markdown. Everything you write is read aloud."""
 
 
+# ── Fixed commands, answered without the model ────────────────────────────────
+# Whole phrases only: single words fired on ordinary sentences — "che giorno è
+# oggi?" switched to companion mode, "buonanotte" would start night watch, any
+# "ricordi" recited the memory, "sei più forte" turned the volume up.
+
+_BUILTINS = (
+    ("night", ("modalità notte", "modalità notturna", "night watch", "fai la guardia")),
+    ("day", ("modalità giorno", "modalità compagnia", "companion mode")),
+    ("quiet", ("silenzio", "stai zitto", "modalità concentrazione", "devo concentrarmi")),
+    ("louder", ("parla più forte", "alza il volume", "alza la voce", "non ti sento")),
+    ("softer", ("parla più piano", "abbassa il volume", "abbassa la voce", "meno forte")),
+    ("memory", ("cosa ricordi", "cosa sai di me", "cosa hai imparato")),
+    ("scan", ("scansiona", "guardati intorno", "esplora la stanza")),
+    ("see", ("cosa vedi", "descrivi cosa vedi", "cosa c'è davanti")),
+)
+
+
+def builtin(cmd_lo: str) -> Optional[str]:
+    """Which fixed command a (lower-case) sentence asks for, if any."""
+    return next((name for name, phrases in _BUILTINS if any(ph in cmd_lo for ph in phrases)), None)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # OllamaBrain — LLM wrapper
 # ══════════════════════════════════════════════════════════════════════════════
@@ -337,25 +359,26 @@ class MindService:
         # Fast built-ins (no LLM)
         cmd_lo = cmd.lower()
 
-        if any(w in cmd_lo for w in ("modalità notte", "notte", "night watch")):
+        action = builtin(cmd_lo)
+
+        if action == "night":
             self._mm.request_transition(Mode.NIGHT_WATCH, reason="voice command")
             self._audio.say("Switching to night watch.")
             return
 
-        if any(w in cmd_lo for w in ("modalità giorno", "giorno", "companion")):
+        if action == "day":
             self._mm.request_transition(Mode.COMPANION_DAY, reason="voice command")
             self._audio.say("Back to companion mode.")
             return
 
-        if any(w in cmd_lo for w in ("silenzio", "focus", "concentrazione")):
+        if action == "quiet":
             self._mm.request_transition(Mode.FOCUS_ASSISTANT, reason="voice command")
             self._audio.say("Okay, I'll keep quiet.")
             return
 
-        # Volume: "parla più piano", "abbassa", "più forte", "alza il volume", "volume 40"
+        # Volume: "parla più piano", "alza il volume", "volume 40"
         m_vol = re.search(r"volume\s+(?:a\s+|al\s+)?(\d{1,3})", cmd_lo)
-        louder = any(w in cmd_lo for w in ("più forte", "alza il volume", "alza la voce", "non ti sento"))
-        softer = any(w in cmd_lo for w in ("più piano", "abbassa", "più basso", "meno forte"))
+        louder, softer = action == "louder", action == "softer"
         if m_vol or louder or softer:
             now = self._audio.volume
             target = int(m_vol.group(1)) if m_vol else now + (20 if louder else -20)
@@ -363,7 +386,7 @@ class MindService:
             self._audio.say("Like this?" if level else "")
             return
 
-        if any(w in cmd_lo for w in ("cosa ricordi", "memoria", "ricordi")):
+        if action == "memory":
             facts = self._knowledge.facts(8) if self._knowledge else []
             if not facts:
                 self._audio.say("I haven't learnt much yet. Give me a night's sleep.")
@@ -376,7 +399,7 @@ class MindService:
             return
 
         # "scansiona" — environment scan
-        if any(w in cmd_lo for w in ("scansiona", "mappa", "guarda intorno", "esplora")):
+        if action == "scan":
             if self._motor and self._sensor:
                 self._audio.say("Scanning the room, one moment.")
                 threading.Thread(
@@ -387,7 +410,7 @@ class MindService:
             return
 
         # "cosa vedi" — answer from latest scene/objects without LLM
-        if any(w in cmd_lo for w in ("cosa vedi", "cosa c'è", "descrivi")):
+        if action == "see":
             scene   = self._vision.last_scene   if self._vision else ""
             objects = self._vision.last_objects if self._vision else ""
             if scene:

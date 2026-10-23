@@ -917,3 +917,15 @@ def test_a_known_face_is_not_enrolled_under_another_name(vision, tmp_path):
     mind.enrollment, mind._vision, mind._audio = {}, v, FakeAudio()
     assert mind.enroll("Giulia") is False
     assert "already know you as Padrone" in mind._audio.said[0][0]
+
+
+@pytest.mark.parametrize("said, action", [
+    ("che giorno è oggi?", None), ("buonanotte a tutti", None), ("ti ricordi di ieri?", None),
+    ("sei più forte di me", None), ("cosa c'è per pranzo", None), ("guarda la mappa", None),
+    ("modalità notte", "night"), ("passa in modalità giorno", "day"), ("stai zitto", "quiet"),
+    ("parla più forte", "louder"), ("abbassa il volume", "softer"), ("cosa ricordi?", "memory"),
+    ("cosa vedi?", "see"), ("scansiona la stanza", "scan"),
+])
+def test_fixed_commands_need_their_whole_phrase(said, action):
+    from services.mind import builtin
+    assert builtin(said) == action
