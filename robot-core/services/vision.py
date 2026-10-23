@@ -999,9 +999,9 @@ class VisionService:
                 messages=[{
                     "role": "user",
                     "content": (
-                        "Sei Spooky, robot ragno. "
-                        "In italiano: descrivi in 1-2 frasi cosa vedi (oggetti, persone, spazio). "
-                        "Prima persona, inizia con 'Vedo'."
+                        "You are Spooky, a small robot spider on a desk, looking through your camera. "
+                        "In English, describe in one or two sentences what you see: objects, people, "
+                        "the space. First person, start with 'I see'. Plain words, no emoji."
                     ),
                     "images": [img_b64],
                 }],
@@ -1037,7 +1037,7 @@ class VisionService:
                     "role": "user",
                     "content": (
                         "List only the physical objects visible in this image. "
-                        "Italian, comma-separated, max 10 items, nouns only."
+                        "English, comma-separated, at most 10 items, nouns only."
                     ),
                     "images": [img_b64],
                 }],
@@ -1064,11 +1064,11 @@ class VisionService:
         if faces:
             labels = [f[4] for f in faces if f[4]]
             if labels:
-                desc = f"Vedo {', '.join(labels)} davanti a me."
+                desc = f"I see {', '.join(labels)} in front of me."
             else:
-                desc = f"C'è una persona davanti a me, ma non la riconosco."
+                desc = "There is someone in front of me, but I don't know them."
         else:
-            desc = "Non vedo nessuno davanti a me in questo momento."
+            desc = "I don't see anyone in front of me right now."
         with self._det_lock:
             self._last_scene = desc
         self._bus.publish(EventType.SCENE_ANALYZED,
