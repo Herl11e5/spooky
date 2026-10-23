@@ -477,9 +477,14 @@ class WakeSpotter:
 
     _NAME_S = 0.3          # the command starts this long after the name begins
 
-    def __init__(self, wake_word: str = "spooky", min_conf: float = 0.9, wait_s: float = 2.5) -> None:
+    def __init__(self, wake_word: str = "spooky", min_conf: float = 0.9, wait_s: float = 2.5,
+                 strict_fn: Optional[Callable[[], bool]] = None, strict_conf: float = 0.97) -> None:
         self._word = wake_word.lower()
         self._min_conf = min_conf
+        # While the body moves, its servos come out as the name at confidence up to 0.87
+        # (measured during autonomy); the user's real calls came out at 1.00.
+        self._strict_fn = strict_fn
+        self._strict_conf = strict_conf
         self._wait = wait_s
         self._name_start: Optional[float] = None   # a name heard, its command not yet taken
         self._utterances: List[list] = []          # recent free-recognition words
@@ -488,9 +493,10 @@ class WakeSpotter:
         """Words of a final result from the grammar recogniser."""
         for w in words:
             if w.get("word") == self._word:
-                ok = w.get("conf", 0.0) >= self._min_conf
+                strict = self._strict_fn is not None and self._strict_fn()
+                ok = w.get("conf", 0.0) >= (self._strict_conf if strict else self._min_conf)
                 log.info(f"Name spotted at {w['start']:.1f}s, confidence {w.get('conf', 0.0):.2f}"
-                         f"{'' if ok else ' — too unsure'}")
+                         f"{' (body moving)' if strict else ''}{'' if ok else ' — too unsure'}")
                 if ok:
                     self._name_start = float(w["start"])
                     return
@@ -566,9 +572,10 @@ class AudioInput:
         # Its own voice comes back through the mic: while it speaks, and a moment
         # after, what is heard is marked as its own and never wakes it or commands it.
         self._own_until = 0.0
-        # Its own motors too: the servos' whine woke it nine times in four minutes of
-        # autonomy (microduck gates on self-motion). And after waking, its own blip
-        # must not wake it again.
+        # Its own motors too: while the body moves, the name needs more confidence
+        # (WakeSpotter's strict threshold) — vetoing it outright ignored the user's real
+        # calls while the robot leaned towards them. And after waking, its own blip must
+        # not wake it again.
         self._moving_fn = moving_fn
         self._moved_at = -1e9
         self._refractory_until = 0.0
@@ -640,7 +647,8 @@ class AudioInput:
         # The name, spotted by a recogniser that may only hear it or [unk] (WakeSpotter).
         kws = vosk.KaldiRecognizer(model, 16000, json.dumps([self._wake_word, "[unk]"]))
         kws.SetWords(True)
-        spotter = WakeSpotter(self._wake_word)
+        spotter = WakeSpotter(self._wake_word,
+                              strict_fn=lambda: time.time() - self._moved_at < self._MOTION_TAIL_S)
         stream_s = 0.0
 
         # Auto-detect a working sample rate for the device
@@ -758,9 +766,6 @@ class AudioInput:
         """The name was heard: listen for a command, starting with what followed it."""
         now = time.time()
         if self._state != self._STATE_IDLE or now < self._own_until or now < self._refractory_until:
-            return
-        if now - self._moved_at < self._MOTION_TAIL_S:
-            log.info(f"Name heard while the body moved — ignored: '{heard}'")
             return
         self._refractory_until = now + self._REFRACTORY_S
         log.info(f"Wake word detected: '{heard}'")

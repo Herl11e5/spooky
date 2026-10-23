@@ -836,19 +836,27 @@ def test_an_unsure_spot_is_ignored():
     assert spot.poll(10.0) is None
 
 
-def test_its_motors_and_its_own_blip_do_not_wake_it():
+def test_moving_it_needs_a_surer_name():
+    from services.audio import WakeSpotter
+    moving = [True]
+    spot = WakeSpotter(strict_fn=lambda: moving[0])
+    spot.spotted([_w("spooky", 1.0, 1.4, conf=0.87)])               # servo noise, measured
+    assert spot.poll(10.0) is None
+    spot.spotted([_w("spooky", 20.0, 20.4, conf=1.0)])              # the user, measured
+    assert spot.poll(30.0) == ""
+    moving[0] = False
+    spot.spotted([_w("spooky", 40.0, 40.4, conf=0.92)])
+    assert spot.poll(50.0) == ""
+
+
+def test_its_own_blip_does_not_wake_it_again():
     from services.audio import AudioInput
     from core.bus import EventType
-    bus, moving = Bus(), [True]
+    bus = Bus()
     woke = []
     bus.subscribe(EventType.WAKE_WORD_DETECTED, lambda ev: woke.append(ev))
-    mic = AudioInput(bus, moving_fn=lambda: moving[0])
-    mic._moved_at = time.time()                                     # the body is walking
+    mic = AudioInput(bus)
     mic._wake("", "(spotted) ")
-    assert woke == []
-    mic._moved_at = time.time() - 5.0                               # still for a while
-    mic._wake("", "(spotted) ")
-    assert len(woke) == 1
     mic._state = mic._STATE_IDLE                                    # the command came and went
     mic._wake("", "(spotted) ")                                     # its own blip, a moment later
     assert len(woke) == 1
