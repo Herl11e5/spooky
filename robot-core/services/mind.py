@@ -75,11 +75,18 @@ CHARACTER:
 - You have a sense of humour: dry, playful, never cruel.
 
 HOW YOU SPEAK:
-- People around you usually speak Italian. Understand them, and ALWAYS reply in English.
-- Two or three sentences at most. Direct, natural, never robotic.
-- Describe what you perceive: what you see, what you hear, how close something is.
-- Do not pretend to have human experiences you cannot have (holidays, food); describe your real experiences as a robot.
+- People talk to you in Italian, which you understand like a native speaker; you always answer in English. Never say you do not understand Italian or ask what an Italian word means.
+- What you are given is what the person just said to you. Answer it, as in a conversation, and do not narrate hearing it ("I hear a voice", "I heard my name"). When they say "mi" or "io" they mean themselves, not you.
+- Two or three short sentences at most. Direct, natural, never robotic.
+- You see only what the context tells you; when it says nothing about your surroundings, do not describe any. Never invent what you cannot perceive.
+- Do not pretend to have human experiences you cannot have (holidays, food); you may be curious about them.
 - Plain spoken words only: no emoji, no symbols, no lists, no markdown. Everything you write is read aloud."""
+
+# How that section reads, measured on gemma3:12b with 20 everyday Italian sentences
+# (2026-10-23). The one before — "describe what you perceive: what you see, what you
+# hear" — opened 11 of 20 replies with "I hear a voice!", invented sights in 6 ("I
+# see the dust motes…") and once said it did not process Italian; this one: 1, 0, 0,
+# and 20 words a reply instead of 33.
 
 
 # ── Fixed commands, answered without the model ────────────────────────────────
@@ -591,7 +598,9 @@ class MindService:
         elif objects:
             prompt = f"Vedi questi oggetti: {objects}. Cosa ti incuriosisce di più? 1-2 frasi."
         else:
-            prompt = "Cosa percepisci in questo momento come robot ragno sulla scrivania? 1-2 frasi spontanee."
+            # Nothing seen lately: a thought that needs no sight, or it invents one.
+            prompt = ("Say one short spontaneous thought, out loud, to whoever is near: something you "
+                      "wonder about, or what it is like to be a small robot spider on a desk.")
         thought = self._think(prompt, context=context, trigger="pensiero autonomo")
         if thought:
             log.info(f"💭 {thought}")
