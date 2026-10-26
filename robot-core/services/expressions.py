@@ -3,7 +3,8 @@ services/expressions.py — Expressions read against each person's own resting f
 
 The body's expression model (MobileFaceNet, RAF-DB) reads every face against faces
 in general, and some resting faces sit close to an expression: the owner's sad face
-(2026-10-22) came out as neutral — sad rose, never past neutral. So each known
+(2026-10-22) came out as neutral — sad rose, never past neutral. (His resting face,
+measured since, is close to pure neutral, 0.96.) So each known
 person gets a baseline, the slow average of the seven probabilities while the model
 reads them as neutral, and an expression counts when it stands clearly above that
 person's own usual, even when it is not the model's first choice.
@@ -33,8 +34,12 @@ _NEUTRAL = EXPRESSIONS.index("neutral")
 
 class ExpressionBaseline:
 
+    # min_lift: measured on the owner's working face (2026-10-26, 595 samples while he
+    # worked and talked): no expression rose more than 0.28 above his usual without him
+    # making it (happy 0.25, sad 0.24, disgust 0.28 at most); at 0.15, 28 samples would
+    # have counted as feelings he did not have.
     def __init__(self, root: Path, tau_s: float = 600.0, warm_s: float = 180.0,
-                 min_lift: float = 0.15, min_ratio: float = 1.8,
+                 min_lift: float = 0.30, min_ratio: float = 1.8,
                  clock: Callable[[], float] = time.monotonic) -> None:
         self._root = Path(root)
         self._tau, self._warm = tau_s, warm_s

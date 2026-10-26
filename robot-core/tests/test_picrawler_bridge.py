@@ -637,8 +637,8 @@ def test_a_known_persons_sad_face_counts_against_their_usual(vision, monkeypatch
     v._baseline = ExpressionBaseline(tmp_path / "baselines", clock=lambda: t[0])
     me = unit(1)
     v._db.enroll_person("p1", "Samuele", [me], v._recognizer)
-    resting = {"angry": .03, "disgust": .02, "fearful": .03, "happy": .04, "neutral": .60, "sad": .25, "surprised": .03}
-    sad = {**resting, "neutral": .45, "sad": .45}
+    resting = {"angry": .0004, "disgust": .002, "fearful": 0.0, "happy": .017, "neutral": .959, "sad": .004, "surprised": .012}
+    sad = {**resting, "neutral": .55, "sad": .42}
     def look(probs, conf):
         return snap({**face(4, near(me, 3)), "expression": "neutral", "expression_confidence": conf,
                      "expressions": probs, "expression_age_s": 0.1})
@@ -647,10 +647,10 @@ def test_a_known_persons_sad_face_counts_against_their_usual(vision, monkeypatch
         t[0] += 0.5
     assert not [e for e in bus.of(EventType.EXPRESSION_CHANGED) if e["expression"] == "sad"]
     for _ in range(4):                                          # sad, for two seconds: the model says neutral
-        v._process_body_faces(look(sad, 0.45))
+        v._process_body_faces(look(sad, 0.55))
         t[0] += 0.5
     changed = [e for e in bus.of(EventType.EXPRESSION_CHANGED) if e["expression"] == "sad"]
-    assert changed and changed[-1]["name"] == "Samuele" and changed[-1]["usual"] == 0.25
+    assert changed and changed[-1]["name"] == "Samuele" and changed[-1]["usual"] == 0.0
 
 
 class FakeModes:

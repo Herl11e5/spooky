@@ -7,10 +7,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.expressions import ExpressionBaseline
 
-# A resting face the model already reads as a little sad — the owner's case (2026-10-22).
-RESTING = {"angry": .03, "disgust": .02, "fearful": .03, "happy": .04, "neutral": .60, "sad": .25, "surprised": .03}
-SAD = {**RESTING, "neutral": .45, "sad": .45}           # sadder — and still "neutral" for the model
-A_BIT = {**RESTING, "neutral": .55, "sad": .32}          # within the usual wobble
+# The owner's resting face as the robot measured it (2026-10-26): close to pure neutral.
+RESTING = {"angry": .0004, "disgust": .002, "fearful": 0.0, "happy": .017, "neutral": .959, "sad": .004, "surprised": .012}
+SAD = {**RESTING, "neutral": .55, "sad": .42}           # clearly sadder — and still "neutral" for the model
+A_BIT = {**RESTING, "neutral": .70, "disgust": .28}     # the most his face wobbled while he worked and talked
 LAUGH = {**RESTING, "neutral": .05, "happy": .90}
 
 
@@ -37,7 +37,7 @@ def test_nothing_is_inferred_before_the_person_has_been_watched(tmp_path):
 
 def test_sad_above_their_own_usual_counts_even_when_the_model_says_neutral(tmp_path):
     b, _ = warmed(tmp_path)
-    assert b.judge("p1", SAD) == ("sad", 0.45, 0.25)
+    assert b.judge("p1", SAD) == ("sad", 0.42, 0.0)
     assert b.judge("p1", A_BIT) is None
 
 
@@ -53,7 +53,7 @@ def test_a_minute_of_laughing_does_not_become_the_usual(tmp_path):
 def test_the_usual_face_is_remembered_across_a_restart(tmp_path):
     b, _ = warmed(tmp_path)
     again = ExpressionBaseline(tmp_path, clock=Clock())
-    assert abs(again.usual("p1")["sad"] - 0.25) < 0.01
+    assert abs(again.usual("p1")["neutral"] - 0.959) < 0.01
     assert again.judge("p1", SAD)[0] == "sad"
 
 
