@@ -116,6 +116,10 @@ class WakeModel:
         self._features = WakeFeatures(Path(models))
         model = Path(models) / "spooky.npz"
         self._clf = Classifier(model) if model.exists() else None
+        # Candidates (models/wakeword/candidates/*.npz) only ever log, on the same audio as the
+        # model in use: a fair comparison, the same room, the same hours.
+        self._candidates = {c.stem: Classifier(c) for c in sorted((Path(models) / "candidates").glob("*.npz"))}
+        self._cand_above: dict = {name: -1e9 for name in self._candidates}
         self._tap: list = []
         self._tap_times: list = []
         self._tap_scores: list = []
@@ -125,7 +129,8 @@ class WakeModel:
         self.last_score = 0.0
         self.best_back = 0
         self.shadow = True            # False once it decides (audio.wake_detector: model)
-        log.info(f"WakeModel: features on{', classifier in shadow mode' if self._clf else ''}")
+        log.info(f"WakeModel: features on{', classifier in shadow mode' if self._clf else ''}"
+                 + (f", candidates {', '.join(self._candidates)}" if self._candidates else ""))
 
     def feed(self, samples: np.ndarray) -> Optional[float]:
         """The highest score in this audio (None without a classifier)."""
@@ -150,6 +155,14 @@ class WakeModel:
         self.last_score = best
         self._collect(window, best)
         now = self._clock()
+        for name, clf in self._candidates.items():
+            score = max(clf.score(self._features.frames[len(self._features.frames) - back - WINDOW:
+                                                        len(self._features.frames) - back])
+                        for back in range(new) if len(self._features.frames) - back >= WINDOW)
+            if score >= clf.threshold:
+                if now - self._cand_above[name] > 1.0:
+                    log.info(f"WakeModel candidate {name}: would wake — score {score:.2f}")
+                self._cand_above[name] = now
         if best >= self._clf.threshold:
             if now - self._above_at > 1.0 and self.shadow:   # one event, not one line per frame
                 log.info(f"WakeModel (shadow): would wake — score {best:.2f}")
