@@ -47,11 +47,17 @@ def test_the_room_level_is_learnt_not_assumed():
     assert -45 < w.room_db < -39
 
 
-def test_habituation_halves_and_recovers():
-    h = Habituation(recover_s=120)
-    assert [h.strength("sound", t) for t in (0, 30, 60)] == [1.0, 0.5, 0.25]
-    assert h.strength("sound", 200) == 1.0                    # two quiet minutes
-    assert h.strength("dark", 201) == 1.0                     # another kind is news
+def test_habituation_halves_and_fades():
+    h = Habituation(fade_s=900)
+    assert [round(h.strength("sound", t), 2) for t in (0, 1, 2)] == [1.0, 0.5, 0.25]
+    assert h.strength("sound", 2 + 5400) > 0.9                # an hour and a half of quiet: fresh
+    assert h.strength("dark", 4000) == 1.0                    # another kind is news
+
+
+def test_a_place_full_of_bangs_stops_startling_it():
+    h = Habituation(fade_s=900)
+    every_3_min = [h.strength("sound", t) for t in range(0, 3600, 180)]
+    assert every_3_min[0] == 1.0 and max(every_3_min[3:]) < 0.3     # used to it within ten minutes
 
 
 class Modes:

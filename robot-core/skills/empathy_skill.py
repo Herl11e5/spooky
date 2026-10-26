@@ -14,7 +14,11 @@ expression has lasted over a second. This skill answers in kind:
 
 Reactions are quick canned lines, not a model call, because a reaction to a smile
 has to come within a second. Each has its own cooldown per person, with a short
-gap between any two, so spooky notices without nagging. Only in companion and
+gap between any two, and it gets used to the faces someone makes often
+(core/habituation.py, a half-hour half-life): on 2026-10-26 the owner's working
+face read as "surprised" all afternoon, and the cooldowns alone let 22 "Did
+something surprise you?" through in four and a half hours (44 remarks in all).
+With habituation the same afternoon gives 17 remarks, 5 of them on surprise. Only in companion and
 observer modes; never during night watch or focus. Movements go through the body,
 which refuses them while the dashboard does not allow the brain to move — the
 voice reaction happens anyway.
@@ -30,6 +34,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Tuple
 
 from core.bus import EventBus, EventType
+from core.habituation import Habituation
 from core.modes import Mode, ModeManager
 
 log = logging.getLogger(__name__)
@@ -67,6 +72,7 @@ REACTIONS: Dict[str, Reaction] = {
 
 _QUIET_S = 600          # after an angry look
 _GAP_S = 20             # between any two reactions
+_NEWS = 0.7             # a face reacted to recently is not news below this
 
 
 class EmpathySkill:
@@ -79,6 +85,7 @@ class EmpathySkill:
         self._motor = motor
         self._clock = clock
         self._last: Dict[Tuple[str, str], float] = {}
+        self._habit = Habituation(fade_s=1800.0)       # (who, expression) → how used to it
         self._last_any = -1e9
         self._quiet_until = 0.0
         self._gentle_until = 0.0
@@ -115,6 +122,10 @@ class EmpathySkill:
             return
         if now < self._quiet_until and expression != "fearful":
             return
+        if self._habit.response((who, expression), now) < _NEWS:
+            log.debug(f"Empathy: {who} looks {expression} again — used to it")
+            return
+        self._habit.note((who, expression), now)
         self._last[(who, expression)] = now
         self._last_any = now
         threading.Thread(target=self._react, args=(expression, reaction, ev.get("name")),

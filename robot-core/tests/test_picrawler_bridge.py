@@ -754,8 +754,20 @@ def test_it_does_not_nag(empathy):
     t[0] += 30
     bus.publish(EventType.EXPRESSION_CHANGED, ev)                # within its cooldown
     t[0] += 120
+    bus.publish(EventType.EXPRESSION_CHANGED, ev)                # past it, but too soon to be news
+    t[0] += 1800
     bus.publish(EventType.EXPRESSION_CHANGED, ev)
     assert wait_for(lambda: len(audio.said) == 2)
+
+
+def test_a_face_someone_makes_all_afternoon_stops_being_news(empathy):
+    skill, bus, modes, audio, motor, t = empathy
+    from core.bus import EventType
+    for _ in range(20):                                          # "surprised" every 3 minutes for an hour
+        bus.publish(EventType.EXPRESSION_CHANGED, {"expression": "surprised", "track_id": 1, "person_id": "p1"})
+        t[0] += 180
+    import time as _t; _t.sleep(0.1)
+    assert 1 <= len(audio.said) <= 3                             # it was 20 with the cooldown alone
 
 
 def test_quiet_modes_get_no_reactions(empathy):
@@ -1111,3 +1123,28 @@ def test_the_greeting_says_how_well_it_knows_someone_not_a_count():
     assert MindService._acquaintance(1) == "You are meeting for the first time. "
     assert MindService._acquaintance(4) == "You have met a few times. "
     assert MindService._acquaintance(52946) == "You know each other well. "
+
+
+def test_someone_in_view_all_along_is_greeted_once_not_every_five_minutes(monkeypatch):
+    import types
+    import services.mind as mind
+    t, greeted = [10_000.0], []
+    monkeypatch.setattr(mind, "time", types.SimpleNamespace(time=lambda: t[0]))
+
+    class NowThread:
+        def __init__(self, target, args=(), **kw):
+            self.run = lambda: target(*args)
+
+        def start(self):
+            self.run()
+    monkeypatch.setattr(mind, "threading", types.SimpleNamespace(Thread=NowThread))
+    m = types.SimpleNamespace(_last_seen_at={}, _last_greeted={}, _greet_cooldown=300, _greet_after_away=300,
+                              _mm=types.SimpleNamespace(is_day_mode=lambda: True),
+                              _greet_person=lambda pid, name: greeted.append((t[0], pid)))
+    seen = {"person_id": "padrone", "display_name": "Padrone"}
+    for _ in range(2 * 60 * 30):                              # half an hour at the desk, twice a second
+        mind.MindService._on_person_identified(m, seen); t[0] += 0.5
+    assert greeted == [(10_000.0, "padrone")]
+    t[0] += 600                                               # away ten minutes, then back
+    mind.MindService._on_person_identified(m, seen)
+    assert len(greeted) == 2

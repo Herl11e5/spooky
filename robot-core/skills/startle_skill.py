@@ -11,8 +11,11 @@ to do about them — before it, a clap would have set off three moves at once.
 The reaction: a flinch (the body's "flinch" gesture: back and down, a moment
 frozen) and a cry; when nobody is there, a look round after it. Then it gets used
 to it, as an animal does: the same kind of thing again soon after gets only a
-cry, a third gets nothing, until two quiet minutes have passed — a television
-does not keep it jumping all evening.
+cry, a third gets nothing — and each one leaves a trace that fades over a quarter
+of an hour, so a place full of bangs stops startling it while a quiet evening
+leaves it fresh. Until 2026-10-26 two quiet minutes made it fresh again: at the
+office (a parcel dropped every few minutes) that was 44 flinches and 17 cries in
+five hours; with the fading trace the same day would have been 4 and 22.
 
 Not while it is speaking or someone is talking to it (a raised voice is not a
 bang). In focus mode it keeps quiet — focus means no initiative, and a "Hm?" at
@@ -30,6 +33,7 @@ import time
 from typing import Callable, Optional
 
 from core.bus import EventBus, EventType
+from core.habituation import Habituation
 from core.modes import Mode, ModeManager
 
 log = logging.getLogger(__name__)
@@ -40,24 +44,6 @@ _CRIES = {
     "dark":    ("Hey, who turned off the lights?", "Dark again."),
     "bright":  ("Oh! Lights!", "Lights."),
 }
-
-
-class Habituation:
-    """
-    How strongly to react: halved by each stimulus of the same kind in the current
-    bout, a bout being stimuli less than `recover_s` apart.
-    """
-
-    def __init__(self, recover_s: float = 120.0) -> None:
-        self._recover = recover_s
-        self._bout: dict[str, tuple[int, float]] = {}      # kind → (count, last)
-
-    def strength(self, kind: str, now: float) -> float:
-        count, last = self._bout.get(kind, (0, -1e9))
-        if now - last >= self._recover:
-            count = 0                                      # two quiet minutes: fresh again
-        self._bout[kind] = (count + 1, now)
-        return 0.5 ** count
 
 
 class StartleSkill:
@@ -73,7 +59,7 @@ class StartleSkill:
         self._motor = motor
         self._state_fn = state_fn               # the body's state, None without a body
         self._clock = clock
-        self._habit = Habituation()
+        self._habit = Habituation(fade_s=900.0)
         self._pending: "queue.Queue[tuple[str, str]]" = queue.Queue()
         self._speaking = False
         self._talking_until = 0.0
