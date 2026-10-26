@@ -80,9 +80,10 @@ class AudioOutput:
 
     def __init__(self, bus: EventBus, language: str = "it", method: str = "auto",
                  speaker_pin: Optional[int] = None, piper_voice: Optional[str] = None,
-                 piper_speaker: Optional[str] = None):
+                 piper_speaker: Optional[str] = None, piper_voices_dir: Optional[str] = None):
         self._bus        = bus
         self._piper_voice = piper_voice or self._PIPER_VOICE
+        self._voices_dir = piper_voices_dir or self._PIPER_VOICES_DIR
         self._piper_speaker = piper_speaker   # multi-speaker voices (VCTK: p232, …)
         self._lang       = language
         self._lock       = threading.Lock()
@@ -266,7 +267,7 @@ class AudioOutput:
             import wave as _wave
             from piper.voice import PiperVoice
             if self._piper is None:
-                voices_dir = Path(self._PIPER_VOICES_DIR).expanduser()
+                voices_dir = Path(self._voices_dir).expanduser()
                 model_onnx = voices_dir / f"{self._piper_voice}.onnx"
                 if not model_onnx.exists():
                     raise FileNotFoundError(f"Piper model missing: {model_onnx}")
@@ -396,7 +397,7 @@ class AudioOutput:
         if method != "auto":
             return method
         # piper-tts (neural, highest quality) — requires model file
-        voices_dir = Path(self._PIPER_VOICES_DIR).expanduser()
+        voices_dir = Path(self._voices_dir).expanduser()
         model_onnx = voices_dir / f"{self._piper_voice}.onnx"
         if model_onnx.exists():
             try:
@@ -1024,6 +1025,7 @@ class AudioService:
         self._out = AudioOutput(bus, language=lang, method=tts_method,
                                 speaker_pin=audio_cfg.get("speaker_enable_pin"),
                                 piper_voice=audio_cfg.get("piper_voice"),
+                                piper_voices_dir=audio_cfg.get("piper_voices_dir"),
                                 piper_speaker=audio_cfg.get("piper_speaker"))
         self._inp = AudioInput(
             bus,

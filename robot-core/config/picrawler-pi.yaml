@@ -19,3 +19,6 @@ audio:
   tts_method: droid
   piper_voice: en_GB-vctk-medium
   piper_speaker: p232
+  # Everything of the robot's in ~/robot (2026-10-26): the models with it, not loose in home.
+  piper_voices_dir: ~/robot/models/piper-voices
+  vosk_model: ~/robot/models/vosk-model-it
