@@ -1,7 +1,9 @@
 """
 The three wake detectors side by side, from the robot's log (run on the Mac).
 
-    python ab_report.py [since]      e.g. "2026-10-26 13:55" (default: today 00:00)
+    python ab_report.py [since] [detector=score ...]
+        e.g. "2026-10-26 13:55" cand:room=0.8   (default: today 00:00; a candidate logs from
+        its own threshold, and counts here only from the score given)
 
 The grammar spotter decides today (its wakes: "Wake word detected"); the model in use
 and each candidate only log ("would wake"). Events closer than 5 s are the same
@@ -14,7 +16,9 @@ import subprocess
 import sys
 from collections import defaultdict
 
-since = sys.argv[1] if len(sys.argv) > 1 else "today"
+args = sys.argv[1:]
+at = {who: float(th) for who, th in (a.split("=") for a in args if "=" in a)}
+since = next((a for a in args if "=" not in a), "today")
 log = subprocess.run(["ssh", "spooky", f"journalctl -u spooky-brain --since '{since}' --no-pager -o short-unix"],
                      capture_output=True, text=True).stdout
 
@@ -29,6 +33,10 @@ for line in lines:
     elif "WakeModel candidate" in line:
         name = re.search(r"candidate (\S+):", line).group(1)
         events.append((t, f"cand:{name}", re.search(r"score ([\d.]+)", line).group(1)))
+    else:
+        continue
+    if events[-1][1] != "vosk" and float(events[-1][2]) < at.get(events[-1][1], 0.0):
+        events.pop()
 events.sort()
 
 moments = []                      # merge detections within 5 s into one moment
