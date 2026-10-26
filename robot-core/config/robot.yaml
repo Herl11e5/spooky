@@ -191,4 +191,5 @@ personality:
   thought_interval_min_s: 120   # autonomous thoughts / idle speech
   thought_interval_max_s: 300
   greet_same_person_cooldown_s: 300
+  greet_after_away_s: 300       # greeted on arriving: unseen at least this long before
   max_history_turns: 10         # LLM context window in turns

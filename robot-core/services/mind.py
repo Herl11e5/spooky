@@ -390,11 +390,13 @@ class MindService:
 
         # Cooldowns
         self._greet_cooldown   = cfg.get("personality.greet_same_person_cooldown_s", 300)
+        self._greet_after_away = cfg.get("personality.greet_after_away_s", 300)
         self._thought_min      = cfg.get("personality.thought_interval_min_s", 30)
         self._thought_max      = cfg.get("personality.thought_interval_max_s", 90)
 
         # State
         self._last_greeted: Dict[str, float] = {}
+        self._last_seen_at: Dict[str, float] = {}   # person_id → last recognised (twice a second)
         self._last_thought: float = 0.0
         self.enrollment: Dict[str, object] = {}   # progress of the current/last enrollment
         self._active = False
@@ -620,10 +622,15 @@ class MindService:
     def _on_person_identified(self, ev) -> None:
         pid  = ev.get("person_id", "")
         name = ev.get("display_name", pid)
-        if not pid or not self._mm.is_day_mode():
+        if not pid:
             return
-
+        # A greeting is for someone arriving: seen all along, the owner was greeted every
+        # five minutes (12-14 times an hour at the office on 2026-10-26).
         now = time.time()
+        away = now - self._last_seen_at.get(pid, 0.0)
+        self._last_seen_at[pid] = now
+        if away < self._greet_after_away or not self._mm.is_day_mode():
+            return
         if now - self._last_greeted.get(pid, 0) < self._greet_cooldown:
             return
         self._last_greeted[pid] = now
