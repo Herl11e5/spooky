@@ -740,6 +740,7 @@ class AudioInput:
         return True
 
     _STALL_S = 5.0        # no audio for this long from an open stream: it is stuck
+    _GIVE_UP_S = 30.0     # still none after reopening: only a new process has cured it
     _WATCH_EVERY_S = 2.0
 
     def _watchdog(self) -> None:
@@ -748,18 +749,31 @@ class AudioInput:
         the reopening below never comes. On 2026-10-26 the battery sagged (7.0 V → 6.9 V)
         and the microphone fell silent for half an hour with the USB device still there.
         Aborting the stream from here turns the hang into an error, and it is reopened.
+        That same day the read stayed stuck through the abort as well (16:50, after it
+        spoke); a restart of the brain brought the microphone back every time, so after
+        half a minute of silence it asks for one — only if this process ever heard audio,
+        so a microphone that is missing altogether does not restart it over and over.
         """
+        aborted = None                          # the stream it last tried to unstick
         while self._active:
             time.sleep(self._WATCH_EVERY_S)
             stream = self._stream
-            if stream is None or not self.heard_at or time.time() - self.heard_at < self._STALL_S:
+            silent = time.time() - self.heard_at
+            if not self.heard_at or silent < self._STALL_S:
                 continue
-            log.error(f"AudioInput: no audio for {time.time() - self.heard_at:.0f} s — reopening the microphone")
-            self.heard_at = time.time()          # one abort, then time for the new stream
-            try:
-                stream.abort()
-            except Exception as e:
-                log.warning(f"AudioInput: abort failed: {e}")
+            if silent >= self._GIVE_UP_S:
+                log.error(f"AudioInput: no audio for {silent:.0f} s, reopening did not help — "
+                          "restarting the brain")
+                self._bus.publish(EventType.SHUTDOWN_REQUEST, {"reason": "microphone hung", "restart": True},
+                                  source="AudioInput")
+                return
+            if stream is not None and stream is not aborted:
+                log.error(f"AudioInput: no audio for {silent:.0f} s — reopening the microphone")
+                aborted = stream
+                try:
+                    stream.abort()
+                except Exception as e:
+                    log.warning(f"AudioInput: abort failed: {e}")
 
     def stop(self) -> None:
         self._active = False
@@ -917,7 +931,6 @@ class AudioInput:
                 if not self._active:
                     break                   # stopping: the stream was closed under the read
                 log.error(f"AudioInput stream error: {e} — reopening in {self._REOPEN_S:.0f} s")
-                self.heard_at = time.time()          # the watchdog waits for the new stream
                 time.sleep(self._REOPEN_S)
                 try:                        # a replugged USB mic comes back as a new device
                     sd._terminate()

@@ -85,6 +85,7 @@ class RobotRuntime:
         self._cfg     = cfg
         self._sim     = sim
         self._active  = False
+        self.exit_code = 0
 
         # ── Event bus (first up, last down) ───────────────────────────────────
         self._bus = EventBus(max_queue=1024)
@@ -388,6 +389,8 @@ class RobotRuntime:
     def _on_shutdown_request(self, ev) -> None:
         reason = ev.get("reason", "requested")
         log.info(f"Shutdown requested: {reason}")
+        if ev.get("restart"):
+            self.exit_code = 75             # not a clean end: systemd (Restart=on-failure) starts a new one
         self._active = False
 
     def _on_mode_changed(self, ev) -> None:
@@ -486,6 +489,11 @@ def main() -> None:
         runtime._modes.request_transition(Mode(args.mode), reason="cli")
 
     runtime.run_forever()
+    if runtime.exit_code:
+        # Out at once: a driver stuck in a read (the reason for a restart) can hang the
+        # interpreter's own exit, and with it the restart.
+        logging.shutdown()
+        os._exit(runtime.exit_code)
 
 
 if __name__ == "__main__":

@@ -195,3 +195,49 @@ def test_stopping_does_not_wait_forever_on_a_microphone_that_hangs(monkeypatch, 
         time.sleep(0.01)
     inp.stop()
     assert aborted.is_set() and not inp._thread.is_alive()
+
+
+def _stuck_input(monkeypatch, tmp_path, give_up_s):
+    """A microphone whose read() hangs, abort or not (16:50 on 2026-10-26)."""
+    import threading
+    import types
+    from services.audio import AudioInput
+    sd = types.SimpleNamespace(query_devices=lambda: [], default=None)
+    monkeypatch.setitem(sys.modules, "sounddevice", sd)
+    monkeypatch.setattr(AudioInput, "_STALL_S", 0.2)
+    monkeypatch.setattr(AudioInput, "_GIVE_UP_S", give_up_s)
+    monkeypatch.setattr(AudioInput, "_WATCH_EVERY_S", 0.05)
+    asked = []
+    bus = types.SimpleNamespace(publish=lambda kind, data=None, **kw: asked.append((kind, data)),
+                                subscribe=lambda *a, **kw: None)
+    inp = AudioInput(bus, vosk_model_path=str(tmp_path))
+    inp._active = True
+    inp._stream = types.SimpleNamespace(abort=lambda: None)     # aborting changes nothing
+    return inp, asked, threading
+
+
+def test_a_microphone_stuck_through_the_abort_restarts_the_brain(monkeypatch, tmp_path):
+    from core.bus import EventType
+    inp, asked, threading = _stuck_input(monkeypatch, tmp_path, give_up_s=0.5)
+    inp.heard_at = time.time()                                  # it did hear, then nothing
+    watch = threading.Thread(target=inp._watchdog, daemon=True)
+    watch.start(); watch.join(3)
+    assert asked == [(EventType.SHUTDOWN_REQUEST, {"reason": "microphone hung", "restart": True})]
+
+
+def test_a_microphone_that_never_worked_does_not_restart_it_again_and_again(monkeypatch, tmp_path):
+    inp, asked, threading = _stuck_input(monkeypatch, tmp_path, give_up_s=0.2)
+    threading.Thread(target=inp._watchdog, daemon=True).start()
+    time.sleep(0.6)
+    inp._active = False
+    assert asked == []
+
+
+def test_a_restart_request_ends_the_brain_with_a_failure_for_systemd():
+    from main import RobotRuntime
+    runtime = SimpleNamespace(_active=True, exit_code=0)
+    RobotRuntime._on_shutdown_request(runtime, {"reason": "microphone hung", "restart": True})
+    assert runtime._active is False and runtime.exit_code == 75
+    runtime = SimpleNamespace(_active=True, exit_code=0)
+    RobotRuntime._on_shutdown_request(runtime, {"reason": "requested"})
+    assert runtime.exit_code == 0
