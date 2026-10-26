@@ -766,6 +766,15 @@ class AudioInput:
         import vosk
         import sounddevice as sd
 
+        import numpy as np
+        try:                         # the dedicated detector, in shadow mode (services/wakeword.py)
+            from services.wakeword import WakeModel
+            root = Path(__file__).resolve().parents[1]
+            wake_model = WakeModel(root / "models" / "wakeword", root / "data" / "wakeword")
+        except Exception as e:
+            log.info(f"WakeModel off: {e}")
+            wake_model = None
+
         vosk.SetLogLevel(-1)
         model = vosk.Model(str(self._vosk_model_path))
         # Vosk always expects 16000 Hz
@@ -811,6 +820,12 @@ class AudioInput:
                         if self._moving_fn is not None and self._moving_fn():
                             self._moved_at = time.time()
                         self._listen_for_bangs(raw)
+                        if wake_model is not None:
+                            try:
+                                wake_model.feed(np.frombuffer(raw, dtype=np.int16))
+                            except Exception as e:        # never at the microphone's expense
+                                log.warning(f"WakeModel: {e} — off until restart")
+                                wake_model = None
                         if kws.AcceptWaveform(raw):
                             spotter.spotted(json.loads(kws.Result()).get("result", []))
                         if rec.AcceptWaveform(raw):

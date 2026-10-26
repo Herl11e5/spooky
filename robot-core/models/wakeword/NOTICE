@@ -1,0 +1,8 @@
+melspectrogram.onnx and embedding_model.onnx come from openWakeWord
+(https://github.com/dscripka/openWakeWord), Apache License 2.0; the embedding model is
+a conversion of Google's speech_embedding (https://tfhub.dev/google/speech_embedding/1),
+Apache License 2.0.
+
+spooky.npz is this project's classifier, trained by tools/wakeword/train.py on synthetic
+voices (Piper) and on openWakeWord's public negative features; report.json is its
+evaluation on held-out voices and on 2.1 h of held-out real audio.

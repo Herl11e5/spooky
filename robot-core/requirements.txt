@@ -31,3 +31,4 @@ flask
 # ── Optional: wake word (Phase 2) ────────────────────────────────────────────
 # openwakeword            → pip install openwakeword
 # pvporcupine             → Picovoice Porcupine (requires API key)
+onnxruntime>=1.17          # the wake-word detector's features (services/wakeword.py)
