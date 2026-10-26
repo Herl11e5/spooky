@@ -156,20 +156,26 @@ def main():
     acav = next((p for p in ("data/acav_2000h.npy", "data/acav_2000h.npy.partial") if Path(p).exists()), None)
     if acav:                                                 # 2000 h (or what has arrived): a sample
         big = partial_npy(acav)
-        pick = np.sort(rng.choice(len(big), min(len(big), 300_000), replace=False))
+        pick = np.sort(rng.choice(len(big), min(len(big), int(os.environ.get("ACAV_SAMPLE", 600_000))),
+                                  replace=False))
         w = np.asarray(big[pick], dtype=np.float32)
         X += list(w); y += [0] * len(w); val += [False] * len(w)
         print(f"ACAV100M: {len(w)} windows of {len(big)} arrived", flush=True)
     # The real room, from the robot's tap: windows near a wake left out (maybe the owner),
-    # the near misses (score >= 0.5) counted five times. One file in five held out.
+    # the near misses (score >= 0.5) counted five times. The most recent quarter of the
+    # room is held out: trained on the past, judged on what came after, as in use.
     ambient, wakes = sorted(glob.glob("data/ambient/ambient-*.npz")), wake_times()
+    sizes = [len(np.load(f)["times"]) for f in ambient]
+    held_from = len(ambient)
+    while held_from > 0 and sum(sizes[held_from - 1:]) <= 0.25 * max(sum(sizes), 1):
+        held_from -= 1
     room_val = []
     for i, f in enumerate(ambient):
         d = np.load(f)
         keep = np.array([not (len(wakes) and np.abs(wakes - t).min() < 15) for t in d["times"]])
         scores = d["scores"] if "scores" in d else np.full(len(keep), -1.0)
         for wdw, s in zip(d["windows"][keep].astype(np.float32), scores[keep]):
-            held = i % 5 == 4
+            held = i >= held_from
             for _ in range(5 if s >= 0.5 and not held else 1):
                 X.append(wdw); y.append(0); val.append(held)
             if held:
