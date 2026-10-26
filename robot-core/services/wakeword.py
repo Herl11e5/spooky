@@ -118,6 +118,7 @@ class WakeModel:
         self._clf = Classifier(model) if model.exists() else None
         self._tap: list = []
         self._tap_times: list = []
+        self._tap_scores: list = []
         self._tap_started = None
         self._tap_last = 0.0
         self._above_at = -1e9
@@ -134,8 +135,8 @@ class WakeModel:
         window = self._features.window()
         if window is None:
             return None
-        self._collect(window)
         if self._clf is None:
+            self._collect(window, None)
             return None
         best = 0.0
         self.best_back = 0                  # how many frames before the end the best one was
@@ -147,6 +148,7 @@ class WakeModel:
                 if s > best:
                     best, self.best_back = s, back
         self.last_score = best
+        self._collect(window, best)
         now = self._clock()
         if best >= self._clf.threshold:
             if now - self._above_at > 1.0 and self.shadow:   # one event, not one line per frame
@@ -158,12 +160,15 @@ class WakeModel:
     def threshold(self) -> Optional[float]:
         return self._clf.threshold if self._clf else None
 
-    def _collect(self, window: np.ndarray) -> None:
+    def _collect(self, window: np.ndarray, score: Optional[float]) -> None:
+        """One window a second, and every window the model is drawn to (score >= 0.5): the
+        room's near misses are the most useful negatives. Training leaves out those near a
+        real call, which the logs date."""
         flag = self._dir / "tap"
         now = self._clock()
         if not flag.exists():
             if self._tap:
-                self._flush()
+                self.flush()
             self._tap_started = None
             return
         if self._tap_started is None:
@@ -173,18 +178,22 @@ class WakeModel:
             flag.unlink(missing_ok=True)
             log.info("WakeModel: tap off after eight hours")
             return
-        if now - self._tap_last >= self.TAP_EVERY_S:
-            self._tap_last = now
+        drawn = score is not None and score >= 0.5
+        if drawn or now - self._tap_last >= self.TAP_EVERY_S:
+            if not drawn:
+                self._tap_last = now
             self._tap.append(window.astype(np.float16))
             self._tap_times.append(now)
+            self._tap_scores.append(-1.0 if score is None else score)
             if len(self._tap) >= 900:          # a file every quarter of an hour
-                self._flush()
+                self.flush()
 
-    def _flush(self) -> None:
+    def flush(self) -> None:
         if not self._tap:
             return
         out = self._dir / "ambient" / time.strftime("ambient-%Y%m%d-%H%M%S.npz", time.localtime(self._tap_times[0]))
         out.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(out, windows=np.stack(self._tap), times=np.array(self._tap_times))
+        np.savez_compressed(out, windows=np.stack(self._tap), times=np.array(self._tap_times),
+                            scores=np.array(self._tap_scores))
         log.info(f"WakeModel: {len(self._tap)} room windows saved to {out.name}")
-        self._tap, self._tap_times = [], []
+        self._tap, self._tap_times, self._tap_scores = [], [], []

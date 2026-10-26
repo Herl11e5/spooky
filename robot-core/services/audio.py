@@ -888,6 +888,8 @@ class AudioInput:
                     sd._initialize()
                 except Exception:
                     pass
+        if wake_model is not None:
+            wake_model.flush()                  # the room windows not yet written (a restart)
 
     def _detect_samplerate(self, sd) -> int:
         """Try rates in order; return the first one the device accepts."""
