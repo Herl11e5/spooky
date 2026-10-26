@@ -35,6 +35,9 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from core.bus import EventBus, EventType
+# At import, in the main thread: importing it (and onnxruntime) from the microphone's
+# thread raced the dashboard thread's own imports (services/dashboard.py).
+from services.wakeword import WakeModel
 
 log = logging.getLogger(__name__)
 
@@ -783,7 +786,6 @@ class AudioInput:
 
         import numpy as np
         try:                         # the dedicated detector, in shadow mode (services/wakeword.py)
-            from services.wakeword import WakeModel
             root = Path(__file__).resolve().parents[1]
             wake_model = WakeModel(root / "models" / "wakeword", root / "data" / "wakeword")
         except Exception as e:

@@ -34,6 +34,11 @@ from typing import Callable, Optional
 
 import numpy as np
 
+try:                    # at import, in the main thread (see services/dashboard.py on why)
+    import onnxruntime as ort
+except ImportError:     # no detector then; the grammar spotter still works
+    ort = None
+
 log = logging.getLogger(__name__)
 
 CHUNK = 1280          # 80 ms at 16 kHz: one embedding frame
@@ -45,7 +50,8 @@ class WakeFeatures:
     """16 kHz int16 audio in, one 96-number embedding per 80 ms out (openWakeWord's streaming)."""
 
     def __init__(self, models: Path, threads: int = 1) -> None:
-        import onnxruntime as ort
+        if ort is None:
+            raise RuntimeError("onnxruntime is not installed")
         opts = ort.SessionOptions()
         opts.inter_op_num_threads = opts.intra_op_num_threads = threads
         self._mel = ort.InferenceSession(str(Path(models) / "melspectrogram.onnx"), sess_options=opts,

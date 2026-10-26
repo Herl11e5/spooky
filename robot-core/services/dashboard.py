@@ -32,6 +32,16 @@ from typing import Any, Dict, Optional
 from core.bus import EventBus, EventType
 from core.modes import Mode, ModeManager
 
+# Imported here, in the main thread at start-up — not in the Dashboard thread: werkzeug
+# walks its own module's names as it loads, and with another thread importing at the
+# same moment (the microphone's, loading onnxruntime) it failed with "dictionary
+# changed size during iteration" (2026-10-26), the dashboard never came up and the
+# release was rolled back.
+try:
+    from flask import Flask, Response, jsonify, request, send_from_directory
+except ImportError:                  # the robot without its dashboard still runs
+    Flask = None
+
 log = logging.getLogger(__name__)
 
 
@@ -135,10 +145,8 @@ class DashboardService:
         threading.Thread(target=self._run_flask, daemon=True, name="Dashboard").start()
 
     def _run_flask(self):
-        try:
-            from flask import Flask, request, jsonify, Response, send_from_directory
-            import os
-        except ImportError:
+        import os
+        if Flask is None:
             log.error("flask not installed"); return
 
         # Get the static folder path
