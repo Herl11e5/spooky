@@ -520,6 +520,7 @@ class WakeSpotter:
         self._wait = wait_s
         self._name_start: Optional[float] = None   # a name heard, its command not yet taken
         self._name_s = 0.0                         # how long the grammar recogniser's "spooky" lasted
+        self._trusted = False                      # set by detected(): the model heard it
         self._utterances: List[list] = []          # recent free-recognition words
 
     def spotted(self, words: list) -> None:
@@ -538,6 +539,14 @@ class WakeSpotter:
                     self._name_start = float(w["start"])
                     self._name_s = float(w.get("end", w["start"])) - float(w["start"])
                     return
+
+    def detected(self, name_start: float) -> None:
+        """The dedicated model heard the name (services/wakeword.py): take the command after it.
+        Trusted: the rules for the grammar recogniser's guesses (length, nothing heard) do
+        not apply; a name glued into someone's sentence is still not a call."""
+        self._name_start = name_start
+        self._name_s = 0.5
+        self._trusted = True
 
     def heard(self, words: list) -> None:
         """Words of a final result from the free recogniser."""
@@ -576,7 +585,8 @@ class WakeSpotter:
         # is heard as something ("sfoghi", "buchi", "seduto"…) or has a command after
         # it. Measured 2026-10-23 16:25–17:41: 16 of about 20 false wakes were this,
         # and 6 of the user's 7 calls had a word or a command.
-        if not heard_as and not command:
+        trusted, self._trusted = self._trusted, False
+        if not heard_as and not command and not trusted:
             log.info(f"Name with nothing said around it — ignored: {context}")
             return None
         log.info(f"Name taken: {context}")
@@ -657,9 +667,14 @@ class AudioInput:
         device: Optional[int] = None,
         moving_fn: Optional[Callable[[], bool]] = None,
         loudness: Optional[LoudnessWatch] = None,
+        detector: str = "vosk",
     ):
         self._bus             = bus
         self._loudness        = loudness or LoudnessWatch()
+        # Who decides the name was said: "vosk" — the grammar recogniser (WakeSpotter), the
+        # dedicated model only logging in shadow; "model" — the dedicated model, the grammar
+        # recogniser off (one Kaldi decoder less on the Pi).
+        self._detector        = detector
         self._wake_word       = wake_word.lower()
         self._vosk_model_path = Path(vosk_model_path).expanduser()
         self._samplerate      = samplerate
@@ -781,8 +796,17 @@ class AudioInput:
         rec = vosk.KaldiRecognizer(model, 16000)
         rec.SetWords(True)
         # The name, spotted by a recogniser that may only hear it or [unk] (WakeSpotter).
-        kws = vosk.KaldiRecognizer(model, 16000, json.dumps([self._wake_word, "[unk]"]))
-        kws.SetWords(True)
+        use_model = self._detector == "model" and wake_model is not None and wake_model.threshold is not None
+        if self._detector == "model" and not use_model:
+            log.warning("AudioInput: wake_detector is 'model' but no model loaded — using Vosk")
+        kws = None
+        if not use_model:
+            kws = vosk.KaldiRecognizer(model, 16000, json.dumps([self._wake_word, "[unk]"]))
+            kws.SetWords(True)
+        else:
+            wake_model.shadow = False
+            log.info(f"AudioInput: the dedicated model decides (threshold {wake_model.threshold:.2f})")
+        model_wake_at = -1e9
         self.model_loaded = True
         spotter = WakeSpotter(self._wake_word,
                               strict_fn=lambda: time.time() - self._moved_at < self._MOTION_TAIL_S)
@@ -822,11 +846,18 @@ class AudioInput:
                         self._listen_for_bangs(raw)
                         if wake_model is not None:
                             try:
-                                wake_model.feed(np.frombuffer(raw, dtype=np.int16))
+                                score = wake_model.feed(np.frombuffer(raw, dtype=np.int16))
                             except Exception as e:        # never at the microphone's expense
                                 log.warning(f"WakeModel: {e} — off until restart")
-                                wake_model = None
-                        if kws.AcceptWaveform(raw):
+                                wake_model, score = None, None
+                            if use_model and score is not None and score >= wake_model.threshold \
+                                    and stream_s - model_wake_at > self._REFRACTORY_S:
+                                # The best frame ends ~0.1 s after the name, which lasts ~0.5 s.
+                                heard_at = stream_s - wake_model.best_back * 0.08
+                                model_wake_at = stream_s
+                                log.info(f"Name heard by the model (score {score:.2f})")
+                                spotter.detected(heard_at - 0.6)
+                        if kws is not None and kws.AcceptWaveform(raw):
                             spotter.spotted(json.loads(kws.Result()).get("result", []))
                         if rec.AcceptWaveform(raw):
                             result = json.loads(rec.Result())
@@ -999,6 +1030,7 @@ class AudioService:
             command_timeout_s=cmd_timeout,
             device=device,
             moving_fn=moving_fn,
+            detector=audio_cfg.get("wake_detector", "vosk"),
         )
 
     def start(self) -> None:

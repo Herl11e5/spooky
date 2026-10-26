@@ -122,6 +122,8 @@ class WakeModel:
         self._tap_last = 0.0
         self._above_at = -1e9
         self.last_score = 0.0
+        self.best_back = 0
+        self.shadow = True            # False once it decides (audio.wake_detector: model)
         log.info(f"WakeModel: features on{', classifier in shadow mode' if self._clf else ''}")
 
     def feed(self, samples: np.ndarray) -> Optional[float]:
@@ -136,18 +138,25 @@ class WakeModel:
         if self._clf is None:
             return None
         best = 0.0
+        self.best_back = 0                  # how many frames before the end the best one was
         for back in range(new):             # every new frame, not only the last
             frames = self._features.frames[len(self._features.frames) - back - WINDOW:
                                            len(self._features.frames) - back]
             if len(frames) == WINDOW:
-                best = max(best, self._clf.score(frames))
+                s = self._clf.score(frames)
+                if s > best:
+                    best, self.best_back = s, back
         self.last_score = best
         now = self._clock()
         if best >= self._clf.threshold:
-            if now - self._above_at > 1.0:            # one event, not one line per frame
+            if now - self._above_at > 1.0 and self.shadow:   # one event, not one line per frame
                 log.info(f"WakeModel (shadow): would wake — score {best:.2f}")
             self._above_at = now
         return best
+
+    @property
+    def threshold(self) -> Optional[float]:
+        return self._clf.threshold if self._clf else None
 
     def _collect(self, window: np.ndarray) -> None:
         flag = self._dir / "tap"

@@ -897,6 +897,30 @@ def test_a_greeting_or_a_pause_before_the_name_is_a_call():
     assert spot.poll(14.0) == "girati"
 
 
+def test_the_models_name_takes_the_command_after_it():
+    from services.audio import WakeSpotter
+    spot = WakeSpotter()
+    spot.detected(13.8)                                             # the model's best frame was at 14.4 s
+    spot.heard([_w("sfoghi", 13.75, 14.25), _w("come", 14.4, 14.6), _w("va", 14.6, 14.9)])
+    assert spot.poll(16.0) == "come va"                             # as on the owner's recording
+
+
+def test_a_lone_name_from_the_model_still_wakes_it():
+    from services.audio import WakeSpotter
+    spot = WakeSpotter()
+    spot.detected(5.0)                                              # nothing transcribed: trusted anyway
+    assert spot.poll(9.0) == ""
+
+
+def test_the_model_does_not_excuse_a_name_glued_into_a_sentence():
+    from services.audio import WakeSpotter
+    spot = WakeSpotter()
+    spot.detected(5.0)
+    spot.heard([_w("e", 4.1, 4.2), _w("quindi", 4.3, 4.7), _w("del", 4.8, 4.95), _w("poco", 5.0, 5.4),
+                _w("caso", 5.5, 5.8)])
+    assert spot.poll(7.0) is None
+
+
 def test_a_lone_name_wakes_it_with_no_command_yet():
     from services.audio import WakeSpotter
     spot = WakeSpotter()
