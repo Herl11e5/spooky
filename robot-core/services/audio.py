@@ -691,6 +691,7 @@ class AudioInput:
         self._thread: Optional[threading.Thread] = None
         # For health(): when the last half second of audio arrived, and why there is none.
         self.heard_at = 0.0
+        self._stream = None                  # the open microphone stream, for the watchdog
         self.model_loaded = False
         self.problem = ""
         self._command_parts: List[str] = []
@@ -734,8 +735,31 @@ class AudioInput:
             target=self._run, daemon=True, name="AudioInput"
         )
         self._thread.start()
+        threading.Thread(target=self._watchdog, daemon=True, name="AudioWatchdog").start()
         log.info(f"AudioInput started (wake_word='{self._wake_word}', model={self._vosk_model_path})")
         return True
+
+    _STALL_S = 5.0        # no audio for this long from an open stream: it is stuck
+    _WATCH_EVERY_S = 2.0
+
+    def _watchdog(self) -> None:
+        """
+        A stream that stops sending without an error: its read() just never returns, so
+        the reopening below never comes. On 2026-10-26 the battery sagged (7.0 V → 6.9 V)
+        and the microphone fell silent for half an hour with the USB device still there.
+        Aborting the stream from here turns the hang into an error, and it is reopened.
+        """
+        while self._active:
+            time.sleep(self._WATCH_EVERY_S)
+            stream = self._stream
+            if stream is None or not self.heard_at or time.time() - self.heard_at < self._STALL_S:
+                continue
+            log.error(f"AudioInput: no audio for {time.time() - self.heard_at:.0f} s — reopening the microphone")
+            self.heard_at = time.time()          # one abort, then time for the new stream
+            try:
+                stream.abort()
+            except Exception as e:
+                log.warning(f"AudioInput: abort failed: {e}")
 
     def stop(self) -> None:
         self._active = False
@@ -836,6 +860,7 @@ class AudioInput:
         while self._active:
             try:
                 with sd.RawInputStream(**stream_kwargs) as stream:
+                    self._stream = stream
                     while self._active:
                         data, _ = stream.read(blocksize)
                         raw = bytes(data)
@@ -882,9 +907,11 @@ class AudioInput:
                                 self._command_timeout if any(self._command_parts) else self._FIRST_WORDS_S):
                             self._emit_command()
             except Exception as e:
+                self._stream = None
                 if not self._active:
                     break                   # stopping: the stream was closed under the read
                 log.error(f"AudioInput stream error: {e} — reopening in {self._REOPEN_S:.0f} s")
+                self.heard_at = time.time()          # the watchdog waits for the new stream
                 time.sleep(self._REOPEN_S)
                 try:                        # a replugged USB mic comes back as a new device
                     sd._terminate()

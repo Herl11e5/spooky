@@ -18,8 +18,9 @@ since = sys.argv[1] if len(sys.argv) > 1 else "today"
 log = subprocess.run(["ssh", "spooky", f"journalctl -u spooky-brain --since '{since}' --no-pager -o short-unix"],
                      capture_output=True, text=True).stdout
 
+lines = [l for l in log.splitlines() if l[:1].isdigit()]   # not the journal's "-- ... --" separators
 events = []                       # (time, detector, detail)
-for line in log.splitlines():
+for line in lines:
     t = float(line.split()[0])
     if "Wake word detected" in line:
         events.append((t, "vosk", line.split("Wake word detected: ", 1)[1][:60]))
@@ -45,7 +46,7 @@ for m in moments:
     for who in m["who"]:
         (shared if len(m["who"]) > 1 else alone)[who] += 1
 
-hours = (float(log.splitlines()[-1].split()[0]) - float(log.splitlines()[0].split()[0])) / 3600 if log else 0
+hours = (float(lines[-1].split()[0]) - float(lines[0].split()[0])) / 3600 if lines else 0
 print(f"{len(moments)} moments over {hours:.1f} h of log\n")
 for m in moments:
     when = subprocess.run(["date", "-r", str(int(m["start"])), "+%H:%M:%S"], capture_output=True, text=True).stdout.strip()

@@ -89,3 +89,62 @@ def test_a_failing_microphone_stream_is_opened_again(tmp_path, monkeypatch):
     inp._active = True
     inp._run()
     assert len(opened) == 2 and inp.heard_at > 0
+
+
+def test_a_stream_that_stops_without_an_error_is_aborted_and_reopened(tmp_path, monkeypatch):
+    """The battery sagged and the microphone's read() never returned: no error, deaf for 30 min."""
+    import threading
+    import types
+    from services.audio import AudioInput
+    opened, released = [], threading.Event()
+
+    class Stream:
+        def __init__(self, **kw):
+            opened.append(self)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def abort(self):
+            released.set()
+
+        def read(self, n):
+            if len(opened) == 1:
+                if len(getattr(self, "reads", [])) == 0:
+                    self.reads = [1]
+                    return b"\0\0" * n, False             # one block, then it hangs
+                released.wait(10)                          # stuck — until the watchdog aborts it
+                raise OSError("aborted")
+            inp._active = False
+            return b"\0\0" * n, False
+
+    class Rec:
+        def __init__(self, *a):
+            pass
+
+        def SetWords(self, on):
+            pass
+
+        def AcceptWaveform(self, raw):
+            return False
+
+        def PartialResult(self):
+            return '{"partial": ""}'
+
+    sd = types.SimpleNamespace(RawInputStream=Stream, query_devices=lambda: [], default=None,
+                               check_input_settings=lambda **kw: None,
+                               _terminate=lambda: None, _initialize=lambda: None)
+    monkeypatch.setitem(sys.modules, "sounddevice", sd)
+    monkeypatch.setitem(sys.modules, "vosk", types.SimpleNamespace(
+        SetLogLevel=lambda n: None, Model=lambda p: object(), KaldiRecognizer=Rec))
+    monkeypatch.setattr(AudioInput, "_REOPEN_S", 0.0)
+    monkeypatch.setattr(AudioInput, "_STALL_S", 0.3)
+    monkeypatch.setattr(AudioInput, "_WATCH_EVERY_S", 0.1)
+    inp = AudioInput(EventBus(), vosk_model_path=str(tmp_path))
+    inp._active = True
+    threading.Thread(target=inp._watchdog, daemon=True).start()
+    inp._run()
+    assert released.is_set() and len(opened) == 2
