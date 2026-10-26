@@ -52,3 +52,21 @@ def test_the_tap_stops_by_itself(tmp_path):
     t[0] += WakeModel.TAP_FOR_S + 1
     m.feed(rng.normal(0, 300, 8000).astype(np.int16))
     assert not (tmp_path / "tap").exists()
+
+
+def test_a_write_cut_off_by_a_restart_leaves_no_broken_file(tmp_path, monkeypatch):
+    t = [1000.0]
+    m = WakeModel(MODELS, tmp_path, clock=lambda: t[0])
+    (tmp_path / "tap").touch()
+    for _ in range(4):
+        m.feed(rng.normal(0, 300, 8000).astype(np.int16)); t[0] += 0.5
+
+    def killed(f, **arrays):
+        f.write(b"PK")
+        raise SystemExit
+    monkeypatch.setattr(np, "savez_compressed", killed)
+    try:
+        m.flush()
+    except SystemExit:
+        pass
+    assert list((tmp_path / "ambient").glob("*.npz")) == []

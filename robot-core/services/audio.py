@@ -763,6 +763,12 @@ class AudioInput:
 
     def stop(self) -> None:
         self._active = False
+        stream = self._stream
+        if stream is not None:
+            try:
+                stream.abort()              # a read stuck in a dead stream would never return
+            except Exception:
+                pass
         if self._thread:
             self._thread.join(timeout=3.0)
         log.info("AudioInput stopped")

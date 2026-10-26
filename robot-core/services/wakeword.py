@@ -28,6 +28,7 @@ data/wakeword/ (survives releases) tap — present → collecting — and ambien
 from __future__ import annotations
 
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Callable, Optional
@@ -212,7 +213,10 @@ class WakeModel:
             return
         out = self._dir / "ambient" / time.strftime("ambient-%Y%m%d-%H%M%S.npz", time.localtime(self._tap_times[0]))
         out.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(out, windows=np.stack(self._tap), times=np.array(self._tap_times),
-                            scores=np.array(self._tap_scores))
+        part = out.with_suffix(".npz.part")        # renamed when whole: a cut-off write leaves no .npz
+        with open(part, "wb") as f:
+            np.savez_compressed(f, windows=np.stack(self._tap), times=np.array(self._tap_times),
+                                scores=np.array(self._tap_scores))
+        os.replace(part, out)
         log.info(f"WakeModel: {len(self._tap)} room windows saved to {out.name}")
         self._tap, self._tap_times, self._tap_scores = [], [], []

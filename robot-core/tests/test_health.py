@@ -148,3 +148,50 @@ def test_a_stream_that_stops_without_an_error_is_aborted_and_reopened(tmp_path, 
     threading.Thread(target=inp._watchdog, daemon=True).start()
     inp._run()
     assert released.is_set() and len(opened) == 2
+
+
+def test_stopping_does_not_wait_forever_on_a_microphone_that_hangs(monkeypatch, tmp_path):
+    """A restart while the microphone hung: the listener ends, so the room windows get written."""
+    import threading
+    import types
+    from services.audio import AudioInput
+    aborted = threading.Event()
+
+    class Stream:
+        def __init__(self, **kw):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def abort(self):
+            aborted.set()
+
+        def read(self, n):
+            aborted.wait(10)                               # hangs, until aborted
+            raise OSError("aborted")
+
+    class Rec:
+        def __init__(self, *a):
+            pass
+
+        def SetWords(self, on):
+            pass
+
+    sd = types.SimpleNamespace(RawInputStream=Stream, query_devices=lambda: [], default=None,
+                               check_input_settings=lambda **kw: None,
+                               _terminate=lambda: None, _initialize=lambda: None)
+    monkeypatch.setitem(sys.modules, "sounddevice", sd)
+    monkeypatch.setitem(sys.modules, "vosk", types.SimpleNamespace(
+        SetLogLevel=lambda n: None, Model=lambda p: object(), KaldiRecognizer=Rec))
+    inp = AudioInput(EventBus(), vosk_model_path=str(tmp_path))
+    inp._active = True
+    inp._thread = threading.Thread(target=inp._run, daemon=True)
+    inp._thread.start()
+    while inp._stream is None:
+        time.sleep(0.01)
+    inp.stop()
+    assert aborted.is_set() and not inp._thread.is_alive()
