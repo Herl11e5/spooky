@@ -635,12 +635,19 @@ class MindService:
             name="MindGreet",
         ).start()
 
+    @staticmethod
+    def _acquaintance(meetings: int) -> str:
+        """How well it knows someone, in words: a count says nothing to the model."""
+        if meetings <= 1:
+            return "You are meeting for the first time. "
+        return "You have met a few times. " if meetings < 10 else "You know each other well. "
+
     def _greet_person(self, person_id: str, display_name: str) -> None:
         profile   = self._memory.get_person(person_id)
         episodes  = self._memory.recent_episodes(3, who=person_id)
         context   = (
             f"The person in front of you is {display_name}: that is their name, and the only name to use. "
-            + (f"You have met {profile['interaction_count']} times. " if profile else "")
+            + (self._acquaintance(profile["interaction_count"]) if profile else "")
             + ("Recently: " + "; ".join(e["what"] for e in episodes) if episodes else "")
         )
         greeting  = self._think(

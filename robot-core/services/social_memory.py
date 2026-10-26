@@ -42,6 +42,7 @@ class SocialMemory:
     _ATTACHMENT_GROWTH_POSITIVE = 0.15  # per positive interaction
     _ATTACHMENT_DECAY = 0.001  # per second (slow, loyalty persists)
     _DECAY_THRESHOLD_DAYS = 30  # if not seen in 30 days, attachment halves
+    _SAME_VISIT_S = 300.0  # seen again within this: the same visit, not a new meeting
 
     def __init__(self, bus: EventBus, memory_service: object):
         self._bus = bus
@@ -50,6 +51,7 @@ class SocialMemory:
         self._db_path = memory_service._db_path if hasattr(memory_service, "_db_path") else None
         self._active = False
         self._thread: Optional[threading.Thread] = None
+        self._seen: Dict[str, float] = {}  # person_id → last time recognised
 
         bus.subscribe(EventType.PERSON_IDENTIFIED, self._on_person_identified)
         bus.subscribe(EventType.COMMAND_PARSED, self._on_interaction)
@@ -222,6 +224,12 @@ class SocialMemory:
         confidence = event_data.get("confidence", 0.5)
 
         if person_id:
+            # Recognition arrives with every camera frame, twice a second: only the first
+            # sighting of a visit is a meeting (and a database write).
+            now = time.time()
+            last, self._seen[person_id] = self._seen.get(person_id, 0.0), now
+            if now - last < self._SAME_VISIT_S:
+                return
             profile = self.get_person_profile(person_id)
             if profile:
                 # Already known — update last_seen + increase attachment slightly

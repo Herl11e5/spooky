@@ -1090,3 +1090,24 @@ def test_not_allowed_to_move_it_stays_as_it_is(nap):
     assert not skill.napping and audio.said == []                  # refused: no announcement
     t[0] = 500; skill.check()
     assert motor.calls == ["sit"]                                   # and it does not keep asking
+
+
+def test_being_seen_twice_a_second_is_one_meeting_not_thousands(tmp_path):
+    from services.memory import MemoryService
+    from services.social_memory import SocialMemory
+    mem = MemoryService(RecordingBus(), db_path=tmp_path / "memory.db")
+    social = SocialMemory(RecordingBus(), mem)
+    seen = {"person_id": "padrone", "display_name": "Padrone"}
+    for _ in range(20):                                     # ten seconds in front of the camera
+        social._on_person_identified(seen)
+    assert social.get_person_profile("padrone")["interaction_count"] == 1
+    social._seen["padrone"] -= social._SAME_VISIT_S + 1     # gone for a while, then back
+    social._on_person_identified(seen)
+    assert social.get_person_profile("padrone")["interaction_count"] == 2
+
+
+def test_the_greeting_says_how_well_it_knows_someone_not_a_count():
+    from services.mind import MindService
+    assert MindService._acquaintance(1) == "You are meeting for the first time. "
+    assert MindService._acquaintance(4) == "You have met a few times. "
+    assert MindService._acquaintance(52946) == "You know each other well. "
